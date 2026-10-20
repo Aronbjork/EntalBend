@@ -10,11 +10,11 @@
   };
 
   var state = {
-    fileName: '', data: null, model: null, layerStats: {},
+    fileName: '', dxfText: '', data: null, model: null, layerStats: {}, currentName: '',
     useLinetype: true, bendLayers: new Set(), ignoreLayers: new Set(), forced: new Map(),
     gap: 6, minLen: 5, scale: 1,
     seq: [],                       // [{id, angle, dir:'UP'|'DOWN', sign:+1|-1, offset}]
-    view: { ox: 0, oy: 0, k: 1 },
+    view: { ox: 0, oy: 0, k: 1 }, viewTouched: false,   // refit on resize until the user zooms or pans
     hover: null, outputEdited: false
   };
 
@@ -35,20 +35,26 @@
     if (!file) return;
     if (/\.dwg$/i.test(file.name)) { setStatus('DWG is not supported. Export the drawing as ASCII DXF.', true); return; }
     var reader = new FileReader();
-    reader.onload = function () { loadText(String(reader.result), file.name); };
+    reader.onload = function () {
+      var text = String(reader.result);
+      if (/\.(json|entalbend)$/i.test(file.name)) importProgram(text, file.name);
+      else { state.currentName = ''; $('progName').value = ''; loadText(text, file.name); renderLibrary(); }
+    };
     reader.onerror = function () { setStatus('Could not read the file.', true); };
     reader.readAsText(file);
   }
 
-  function loadText(text, name) {
+  /* `saved` is a saved program's detection block; it restores the layer and line choices. */
+  function loadText(text, name, saved) {
     var data;
     try { data = DXF.parse(text); }
-    catch (err) { setStatus('Could not read DXF: ' + err.message, true); return; }
+    catch (err) { setStatus('Could not read DXF: ' + err.message, true); return false; }
     state.data = data;
+    state.dxfText = text;
     state.fileName = name;
-    state.forced = new Map();
-    state.bendLayers = new Set();
-    state.ignoreLayers = new Set();
+    state.forced = new Map(saved ? saved.forced : []);
+    state.bendLayers = new Set(saved ? saved.bendLayers : []);
+    state.ignoreLayers = new Set(saved ? saved.ignoreLayers : []);
     state.layerStats = {};
     data.entities.forEach(function (e) {
       var st = state.layerStats[e.layer] || (state.layerStats[e.layer] = { count: 0, ltype: '' });
@@ -64,6 +70,7 @@
     var n = state.model.bends.length;
     setStatus(n ? n + ' bend line' + (n === 1 ? '' : 's') + ' found. Click a bend line to add it to the sequence.'
                 : 'No bend lines found. Mark a layer as Bend, or Shift+click a line to treat it as a bend.', !n);
+    return true;
   }
 
   function rebuild(fit) {
@@ -249,7 +256,8 @@
     var w = wrap.clientWidth, h = wrap.clientHeight;
     cv.width = Math.max(1, Math.round(w * dpr));
     cv.height = Math.max(1, Math.round(h * dpr));
-    draw();
+    if (state.model && !state.viewTouched) fitView();
+    else draw();
   }
 
   function cssW() { return $('cv').width / (window.devicePixelRatio || 1); }
@@ -264,6 +272,7 @@
     if (!isFinite(k) || k <= 0) k = 1;
     var cx = (bb.minx + bb.maxx) / 2, cy = (bb.miny + bb.maxy) / 2;
     state.view = { k: k, ox: w / 2 - cx * k, oy: h / 2 + cy * k };
+    state.viewTouched = false;
     draw();
   }
 
@@ -397,6 +406,7 @@
         var dx = ev.offsetX - drag.x, dy = ev.offsetY - drag.y;
         if (drag.moved || Math.hypot(dx, dy) > 4) {
           drag.moved = true;
+          state.viewTouched = true;
           state.view.ox = drag.ox + dx; state.view.oy = drag.oy + dy;
           draw();
         }
@@ -433,6 +443,7 @@
       ev.preventDefault();
       var v = state.view, f = ev.deltaY < 0 ? 1.15 : 1 / 1.15;
       var wx = (ev.offsetX - v.ox) / v.k, wy = (v.oy - ev.offsetY) / v.k;
+      state.viewTouched = true;
       v.k *= f;
       v.ox = ev.offsetX - wx * v.k;
       v.oy = ev.offsetY + wy * v.k;
@@ -609,6 +620,169 @@
     sendLines(lines);
   }
 
+  /* ------------------------------------------------------------------ saved programs */
+
+  /* Programs are kept in IndexedDB in this browser. "Save as file" / "Open file" move them
+   * between PCs or keep a backup, since clearing browser data also clears the library. */
+  var PROGRAM_FIELDS = ['progNo', 'job', 'material', 'thickness', 'punch', 'die', 'defAngle'];
+  var dbPromise = null;
+
+  function openDb() {
+    if (!dbPromise) {
+      dbPromise = new Promise(function (resolve, reject) {
+        if (!window.indexedDB) { reject(new Error('This browser cannot store programs.')); return; }
+        var req = indexedDB.open('entalbend', 1);
+        req.onupgradeneeded = function () { req.result.createObjectStore('programs', { keyPath: 'name' }); };
+        req.onsuccess = function () { resolve(req.result); };
+        req.onerror = function () { reject(req.error || new Error('Could not open the program store.')); };
+      });
+      dbPromise.catch(function () { dbPromise = null; });
+    }
+    return dbPromise;
+  }
+
+  function dbCall(mode, fn) {
+    return openDb().then(function (db) {
+      return new Promise(function (resolve, reject) {
+        var tx = db.transaction('programs', mode);
+        var req = fn(tx.objectStore('programs'));
+        tx.oncomplete = function () { resolve(req ? req.result : undefined); };
+        tx.onerror = tx.onabort = function () { reject(tx.error || new Error('Storage error.')); };
+      });
+    });
+  }
+
+  function programName() {
+    return $('progName').value.trim() || $('job').value.trim() || $('progNo').value.trim() || baseName();
+  }
+
+  function snapshot(name) {
+    var fields = {};
+    PROGRAM_FIELDS.forEach(function (id) { fields[id] = $(id).value; });
+    return {
+      format: 'entalbend-program', version: 1, name: name, savedAt: new Date().toISOString(),
+      fileName: state.fileName, dxf: state.dxfText,
+      detection: {
+        useLinetype: state.useLinetype, gap: state.gap, minLen: state.minLen, scale: state.scale,
+        bendLayers: Array.from(state.bendLayers), ignoreLayers: Array.from(state.ignoreLayers),
+        forced: Array.from(state.forced.entries())
+      },
+      fields: fields,
+      seq: state.seq.map(function (e) { return { id: e.id, angle: e.angle, dir: e.dir, sign: e.sign, offset: e.offset }; }),
+      output: state.outputEdited ? { format: $('outFormat').value, text: $('outText').value } : null
+    };
+  }
+
+  function applyProgram(p) {
+    if (!p || p.format !== 'entalbend-program' || typeof p.dxf !== 'string') throw new Error('This is not an EntalBend program file.');
+    var d = p.detection || {};
+    $('useLinetype').checked = d.useLinetype !== false;
+    if (d.gap !== undefined) $('gap').value = d.gap;
+    if (d.minLen !== undefined) $('minLen').value = d.minLen;
+    if (d.scale !== undefined) $('scale').value = d.scale;
+    readDetection();
+    PROGRAM_FIELDS.forEach(function (id) { if (p.fields && p.fields[id] !== undefined) $(id).value = p.fields[id]; });
+    saveSettings();
+    state.seq = [];
+    var ok = loadText(p.dxf, p.fileName || 'program.dxf',
+      { forced: d.forced || [], bendLayers: d.bendLayers || [], ignoreLayers: d.ignoreLayers || [] });
+    if (!ok) return;
+
+    var ids = new Set(state.model.bends.map(function (b) { return b.id; }));
+    var saved = Array.isArray(p.seq) ? p.seq : [];
+    state.seq = saved.filter(function (e) { return ids.has(e.id); }).map(function (e) {
+      return { id: e.id, angle: +e.angle || 0, dir: e.dir === 'DOWN' ? 'DOWN' : 'UP', sign: e.sign === -1 ? -1 : 1, offset: +e.offset || 0 };
+    });
+    state.currentName = p.name || '';
+    $('progName').value = state.currentName;
+    state.outputEdited = false;
+    renderTable();
+    if (p.output && typeof p.output.text === 'string') {
+      $('outFormat').value = p.output.format || 'text';
+      $('outText').value = p.output.text;
+      state.outputEdited = true;
+      $('outEditedNote').hidden = false;
+    }
+    renderLibrary();
+    var lost = saved.length - state.seq.length;
+    setStatus('Opened "' + (p.name || p.fileName) + '" with ' + state.seq.length + ' bend' + (state.seq.length === 1 ? '' : 's') + '.' +
+      (lost ? ' ' + lost + ' bend(s) did not match the drawing and were left out.' : ''), lost > 0);
+  }
+
+  function confirmReplace() {
+    return !state.seq.length || window.confirm('Replace the program that is open now? Changes that are not saved will be lost.');
+  }
+
+  function saveProgram() {
+    if (!state.data) { setStatus('Open a DXF before saving a program.', true); return; }
+    var name = programName();
+    dbCall('readonly', function (s) { return s.get(name); }).then(function (existing) {
+      if (existing && name !== state.currentName &&
+          !window.confirm('A program named "' + name + '" already exists. Replace it?')) return;
+      return dbCall('readwrite', function (s) { return s.put(snapshot(name)); }).then(function () {
+        state.currentName = name;
+        $('progName').value = name;
+        if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(function () {});
+        setStatus('Saved "' + name + '".');
+        renderLibrary();
+      });
+    }).catch(function (err) { setStatus('Could not save: ' + err.message, true); });
+  }
+
+  function openSaved(name) {
+    if (!confirmReplace()) return;
+    dbCall('readonly', function (s) { return s.get(name); }).then(function (p) {
+      if (!p) throw new Error('it is no longer in the library.');
+      applyProgram(p);
+    }).catch(function (err) { setStatus('Could not open "' + name + '": ' + err.message, true); });
+  }
+
+  function deleteSaved(name) {
+    if (!window.confirm('Delete the saved program "' + name + '"? This cannot be undone.')) return;
+    dbCall('readwrite', function (s) { return s.delete(name); }).then(function () {
+      if (state.currentName === name) state.currentName = '';
+      setStatus('Deleted "' + name + '".');
+      renderLibrary();
+    }).catch(function (err) { setStatus('Could not delete: ' + err.message, true); });
+  }
+
+  function renderLibrary() {
+    var body = $('libBody');
+    dbCall('readonly', function (s) { return s.getAll(); }).then(function (list) {
+      if (!list.length) { body.innerHTML = '<tr><td colspan="3" class="empty">No saved programs yet.</td></tr>'; return; }
+      list.sort(function (a, b) { return a.name.localeCompare(b.name, undefined, { numeric: true }); });
+      body.innerHTML = list.map(function (p) {
+        var when = p.savedAt ? new Date(p.savedAt).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' }) : '';
+        return '<tr data-name="' + esc(p.name) + '"' + (p.name === state.currentName ? ' class="current"' : '') + '>' +
+          '<td>' + esc(p.name) + '<br><span class="muted small">' + esc(p.fileName || '') + (when ? ' · ' + esc(when) : '') + '</span></td>' +
+          '<td class="num">' + (p.seq ? p.seq.length : 0) + '</td>' +
+          '<td class="acts"><button class="mini" type="button" data-act="open">Open</button>' +
+            '<button class="mini" type="button" data-act="del" title="Delete">✕</button></td></tr>';
+      }).join('');
+    }).catch(function (err) {
+      body.innerHTML = '<tr><td colspan="3" class="empty">' + esc(err.message) + '</td></tr>';
+    });
+  }
+
+  function exportProgram() {
+    if (!state.data) { setStatus('Open a DXF before saving a program.', true); return; }
+    var name = programName();
+    download(name.replace(/[\\/:*?"<>|]+/g, '_') + '.entalbend.json', JSON.stringify(snapshot(name)), 'application/json');
+    setStatus('Saved "' + name + '" as a file.');
+  }
+
+  function importProgram(text, fileName) {
+    var p;
+    try { p = JSON.parse(text); }
+    catch (e) { setStatus('Could not read ' + fileName + ': it is not an EntalBend program file.', true); return; }
+    if (!confirmReplace()) return;
+    try { applyProgram(p); }
+    catch (err) { setStatus(err.message, true); return; }
+    // Not in this browser's library until it is saved here.
+    state.currentName = '';
+    renderLibrary();
+  }
+
   /* ------------------------------------------------------------------ settings */
 
   function saveSettings() {
@@ -655,6 +829,18 @@
       if (ev.dataTransfer && ev.dataTransfer.files.length) loadFile(ev.dataTransfer.files[0]);
     });
     $('fitBtn').addEventListener('click', fitView);
+
+    $('btnSaveProg').addEventListener('click', saveProgram);
+    $('btnExportProg').addEventListener('click', exportProgram);
+    $('progFileInput').addEventListener('change', function (ev) { loadFile(ev.target.files[0]); ev.target.value = ''; });
+    $('progName').addEventListener('keydown', function (ev) { if (ev.key === 'Enter') saveProgram(); });
+    $('libBody').addEventListener('click', function (ev) {
+      var btn = ev.target.closest('button[data-act]');
+      if (!btn) return;
+      var name = btn.closest('tr').dataset.name;
+      if (btn.dataset.act === 'open') openSaved(name);
+      else if (btn.dataset.act === 'del') deleteSaved(name);
+    });
 
     ['useLinetype', 'gap', 'minLen', 'scale'].forEach(function (id) {
       $(id).addEventListener('change', function () {
@@ -767,8 +953,12 @@
     window.addEventListener('resize', sizeCanvas);
     sizeCanvas();
     renderTable();
+    renderLibrary();
   }
 
-  window.EntalBend = { loadText: loadText, state: state, computeRows: computeRows, formatProgram: formatProgram, toggleBend: toggleBend };
+  window.EntalBend = {
+    loadText: loadText, state: state, computeRows: computeRows, formatProgram: formatProgram, toggleBend: toggleBend,
+    snapshot: snapshot, applyProgram: applyProgram
+  };
   init();
 })();

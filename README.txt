@@ -40,6 +40,18 @@ How to use
 7. Fill in program number (max 6 digits), job reference (max 13 characters), material, thickness,
    punch and die. These limits come from the Operator 2000 programming manual.
 
+Saved programs
+--------------
+The Saved programs panel keeps a library of bending programs in this browser.
+- Save stores the DXF, the bend detection settings, the program fields and the whole bend
+  sequence (order, angle, direction, gauge side, offset) under the Name. An empty Name uses
+  the job reference, then the program number, then the DXF file name.
+- Open loads a saved program again. The X button deletes it.
+- Save as file writes the program as a .entalbend.json file. Open file (or dropping the file on
+  the drawing) reads it back. Use this for backups and to move programs to another PC.
+- The library lives in the browser (IndexedDB). Clearing browsing data in Chrome/Edge, or using
+  another browser or PC, gives an empty library, so keep files of the programs that matter.
+
 Important
 ---------
 - The distances come from the flat pattern. They are not the "external flange" values that the

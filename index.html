@@ -56,6 +56,26 @@
 
   <aside class="side">
     <section class="panel">
+      <h2>Saved programs</h2>
+      <div class="fields">
+        <label>Name<input id="progName" maxlength="60" placeholder="defaults to job reference"></label>
+      </div>
+      <div class="toolbar libTools">
+        <button class="btn primary" id="btnSaveProg" type="button">Save</button>
+        <button class="mini" id="btnExportProg" type="button" title="Save this program as a file, as a backup or to move it to another PC">Save as file</button>
+        <label class="mini" title="Open a program file saved with Save as file">Open file
+          <input type="file" id="progFileInput" accept=".json,.entalbend" hidden>
+        </label>
+      </div>
+      <div class="tableWrap">
+        <table class="plain lib">
+          <thead><tr><th>Name</th><th>Bends</th><th></th></tr></thead>
+          <tbody id="libBody"><tr><td colspan="3" class="empty">No saved programs yet.</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel">
       <h2>Program</h2>
       <div class="fields">
         <label>Program no.<input id="progNo" inputmode="numeric" maxlength="6" placeholder="max 6 digits"></label>

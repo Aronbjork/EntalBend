@@ -92,8 +92,9 @@ p { margin: 0; }
 .bends { margin-bottom: 20px; }
 
 /* Drawing */
-.viewer { padding: 0; display: flex; flex-direction: column; overflow: hidden; }
-.canvasWrap { position: relative; flex: 1 1 auto; height: 58vh; min-height: 380px; background: var(--canvas); }
+/* The drawing keeps a window-sized height and stays in view while the side column scrolls. */
+.viewer { padding: 0; display: flex; flex-direction: column; overflow: hidden; align-self: start; position: sticky; top: 84px; }
+.canvasWrap { position: relative; height: calc(100vh - 170px); min-height: 380px; background: var(--canvas); }
 .canvasWrap canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
 .canvasWrap.drag { outline: 2px dashed var(--brand); outline-offset: -10px; background: var(--brand-tint); }
 .hint {
@@ -170,6 +171,12 @@ table.seq input[type=number] { width: 88px; }
 table.seq select { width: 104px; }
 table.seq input.hl { background: rgba(253,198,86,.25); border-color: var(--warn); }
 table.plain td, table.plain th { padding: 6px 10px; font-size: 12.5px; }
+.libTools { margin: 12px 0 0; }
+table.lib th, table.lib td { padding: 6px 8px; }
+table.lib td:first-child { white-space: normal; overflow-wrap: break-word; width: 100%; }
+table.lib td.acts { white-space: nowrap; }
+table.lib tr.current td { background: var(--brand-tint); }
+table.lib td.acts .mini { padding: 3px 9px; }
 td.acts { text-align: right; }
 td.acts .mini { margin-left: 4px; padding: 4px 9px; }
 td.notes { white-space: normal; min-width: 220px; }
@@ -211,6 +218,8 @@ td.notes { white-space: normal; min-width: 220px; }
 
 @media (max-width: 1080px) {
   .layout { grid-template-columns: 1fr; }
+  .viewer { position: static; }
+  .canvasWrap { height: 58vh; }
   .grid2 { grid-template-columns: 1fr; }
 }
 @media (max-width: 480px) { .fields.cols { grid-template-columns: 1fr; } }
