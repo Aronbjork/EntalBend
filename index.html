@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EntalBend</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Urbanist:wght@600;700;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<script>
+  /* Apply the saved theme before first paint. Same key as AroNet / EntalCalc. */
+  try { var th = localStorage.getItem('entalcalc-theme'); if (th) document.documentElement.dataset.theme = th; } catch (e) {}
+</script>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="top">
+  <div class="top-inner">
+    <img src="ental-logo.svg" alt="Ental Air" class="logo" onerror="this.style.display='none'">
+    <div class="top-title">
+      <span class="eyebrow">Amada HFE 80-25 · Operateur 2000</span>
+      <h1>EntalBend</h1>
+    </div>
+    <div class="top-actions">
+      <span id="fileName" class="muted">No file loaded</span>
+      <label class="btn primary">Open DXF
+        <input type="file" id="fileInput" accept=".dxf,.DXF" hidden>
+      </label>
+      <button type="button" class="icon-btn" id="themeBtn" title="Light/dark mode" aria-label="Toggle theme">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+      </button>
+    </div>
+  </div>
+</header>
+
+<div class="page">
+<main class="layout">
+  <section class="panel viewer">
+    <div class="canvasWrap" id="dropZone">
+      <canvas id="cv"></canvas>
+      <div class="hint" id="hint">
+        <strong>Drop an ASCII .dxf file here</strong>
+        <span>or use Open DXF. Bend lines must be dashed (or on a layer you mark as bend).</span>
+      </div>
+      <div class="viewTools"><button class="mini" id="fitBtn" type="button">Fit to view</button></div>
+      <div class="legend">
+        <span><i class="sw cand"></i>Bend line</span>
+        <span><i class="sw up"></i>Up</span>
+        <span><i class="sw down"></i>Down</span>
+        <span class="muted">Arrow = gauge side</span>
+      </div>
+    </div>
+    <div class="statusbar" id="status">Click a dashed bend line to add it to the sequence. Right-click a selected bend to flip its direction. Shift+click marks or unmarks any line as a bend. Wheel zooms, drag pans.</div>
+  </section>
+
+  <aside class="side">
+    <section class="panel">
+      <h2>Program</h2>
+      <div class="fields">
+        <label>Program no.<input id="progNo" inputmode="numeric" maxlength="6" placeholder="max 6 digits"></label>
+        <label>Job reference<input id="job" maxlength="13" placeholder="max 13 characters"></label>
+        <label>Material<input id="material" list="matList" value="Steel"></label>
+        <datalist id="matList"><option value="Steel"><option value="Stainless steel"><option value="Aluminium"></datalist>
+        <label>Thickness (mm)<input id="thickness" type="number" step="0.1" min="0" value="2"></label>
+        <label>Punch<input id="punch" placeholder="tool reference"></label>
+        <label>Die<input id="die" placeholder="tool reference"></label>
+        <label>Default angle (°)<input id="defAngle" type="number" step="0.1" min="0" max="180" value="90"></label>
+      </div>
+    </section>
+
+    <section class="panel">
+      <details open>
+        <summary>Bend line detection</summary>
+        <div class="fields">
+          <label class="check"><input type="checkbox" id="useLinetype" checked> Dashed linetype means bend</label>
+          <label>Join gaps up to (mm)<input id="gap" type="number" step="0.5" min="0" value="6"></label>
+          <label>Ignore bend lines shorter than (mm)<input id="minLen" type="number" step="1" min="0" value="5"></label>
+          <label>Drawing scale<input id="scale" type="number" step="any" min="0.0001" value="1"></label>
+        </div>
+        <div class="tableWrap">
+          <table class="plain" id="layerTable">
+            <thead><tr><th>Layer</th><th>Linetype</th><th>Bend</th><th>Ignore</th></tr></thead>
+            <tbody id="layerBody"><tr><td colspan="4" class="empty">Load a DXF to list its layers.</td></tr></tbody>
+          </table>
+        </div>
+        <p class="muted small" id="detectInfo"></p>
+      </details>
+    </section>
+  </aside>
+</main>
+
+<section class="panel bends">
+  <div class="rowHead">
+    <h2>Bend sequence</h2>
+    <button class="mini" id="clearSeq" type="button">Clear selection</button>
+  </div>
+  <div class="tableWrap">
+    <table class="seq">
+      <thead>
+        <tr>
+          <th>#</th><th>Bend</th><th>Angle (°)</th><th>Direction</th><th>Length</th>
+          <th title="Which side of the bend line the backgauge measures to">Gauge side</th>
+          <th>To edge</th>
+          <th title="Added to the edge distance. Use it for a second bend on a flange that already has a bend.">Offset</th>
+          <th>Backgauge X</th><th>Notes</th><th></th>
+        </tr>
+      </thead>
+      <tbody id="seqBody"></tbody>
+    </table>
+  </div>
+  <p class="muted small">Up folds the flange toward you as drawn; Down folds it away, so the part is turned over (FLIP). Distances are flat-pattern distances from the bend line to the edge, in mm.</p>
+</section>
+
+<section class="grid2">
+  <div class="panel">
+    <h2>Program output</h2>
+    <div class="toolbar">
+      <label class="inline">Format
+        <select id="outFormat">
+          <option value="text">Readable text</option>
+          <option value="csv">CSV (semicolon)</option>
+          <option value="json">JSON</option>
+        </select>
+      </label>
+      <button class="mini" id="regen" type="button">Regenerate</button>
+      <button class="mini" id="dlBtn" type="button">Download</button>
+      <button class="mini" id="copyBtn" type="button">Copy</button>
+      <span class="muted small" id="outEditedNote" hidden>Edited by hand. Regenerate to discard.</span>
+    </div>
+    <textarea id="outText" spellcheck="false" rows="16"></textarea>
+  </div>
+
+  <div class="panel">
+    <h2>RS232 (Web Serial)</h2>
+    <div class="warn">
+      The manuals for this control do not describe an RS232 program format, so the text on the left is sent as it is. The default port settings (9600 baud, 7 data bits, even parity, XON/XOFF) are a common setup for older controls, not confirmed for the Operateur 2000. Use the receive log to capture what the control sends, then edit the output to match. Only send when the machine is idle.
+    </div>
+    <div class="warn" id="serialSupport" hidden>This browser has no Web Serial support. Use Chrome or Edge on a desktop computer.</div>
+    <div class="fields cols">
+      <label>Baud rate
+        <select id="baud">
+          <option>1200</option><option>2400</option><option>4800</option><option selected>9600</option>
+          <option>19200</option><option>38400</option><option>57600</option><option>115200</option>
+        </select>
+      </label>
+      <label>Data bits<select id="dataBits"><option selected>7</option><option>8</option></select></label>
+      <label>Parity<select id="parity"><option value="none">None</option><option value="even" selected>Even</option><option value="odd">Odd</option></select></label>
+      <label>Stop bits<select id="stopBits"><option selected>1</option><option>2</option></select></label>
+      <label>Flow control<select id="flow"><option value="xonxoff" selected>XON/XOFF</option><option value="hardware">RTS/CTS</option><option value="none">None</option></select></label>
+      <label>Line ending<select id="eol"><option value="CRLF" selected>CR+LF</option><option value="LF">LF</option><option value="CR">CR</option></select></label>
+      <label>Delay per line (ms)<input id="lineDelay" type="number" min="0" step="10" value="100"></label>
+    </div>
+    <div class="toolbar">
+      <button class="btn primary" id="btnConnect" type="button">Connect</button>
+      <button class="btn" id="btnDisconnect" type="button" disabled>Disconnect</button>
+      <button class="btn" id="btnSend" type="button" disabled>Send program</button>
+      <button class="btn" id="btnStop" type="button" disabled>Stop</button>
+      <span class="muted small" id="serialState">Not connected</span>
+    </div>
+    <div class="toolbar">
+      <input id="manualText" placeholder="Send a single line (cable test)" class="grow">
+      <button class="mini" id="btnManual" type="button" disabled>Send line</button>
+    </div>
+    <div class="toolbar">
+      <label class="inline">Show received data as
+        <select id="rxMode"><option value="ascii">Text</option><option value="hex">Hex</option></select>
+      </label>
+      <button class="mini" id="btnClearLog" type="button">Clear log</button>
+      <button class="mini" id="btnSaveLog" type="button">Save log</button>
+    </div>
+    <div class="log" id="log" aria-live="polite"></div>
+  </div>
+</section>
+</div>
+
+<script src="dxf.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
