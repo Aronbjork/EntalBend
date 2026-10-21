@@ -123,3 +123,9 @@ Die and ram in the 3D simulator
 The die is drawn from a photo of the real die (60 mm wide, 48 mm high; V groove 38 mm from the back edge and 22 mm from
 the front edge, shoulder radii, relief groove). V width = last two digits of the die reference. The upper beam is red with
 an AMADA lettering on its front. Approximate, not a manufacturer drawing.
+
+Small tabs on the gauged edge
+-----------------------------
+"Ignore tabs narrower than (mm)" in the Program panel (default 60, 0 = off): the backgauge distance is measured to the
+farthest edge that is at least that wide, so a small tab on the edge does not move X and the auto fingers sit on the
+main edge. The tab still shows in the drawing. Set 0 to measure to the very farthest point as before.

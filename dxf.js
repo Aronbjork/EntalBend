@@ -335,7 +335,43 @@
     return null;
   }
 
-  var api = { parse: parse, buildModel: buildModel, sideExtent: sideExtent, defaultSide: defaultSide, sameFlange: sameFlange };
+
+  /* Distance from the bend line to the edge the backgauge really touches on one side: the farthest edge that is at
+     least minW wide along the bend direction. Small tabs narrower than minW are ignored. minW <= 0 gives sideExtent. */
+  function gaugeExtent(bend, sign, segs, pts, minW) {
+    var ext = sideExtent(bend, sign, pts);
+    if (!(minW > 0) || !segs || !segs.length) return ext;
+    var dx = (bend.p2[0] - bend.p1[0]) / bend.len, dy = (bend.p2[1] - bend.p1[1]) / bend.len;
+    var nx = -dy * sign, ny = dx * sign;
+    var map = function (p) { return [(p[0] - bend.p1[0]) * dx + (p[1] - bend.p1[1]) * dy, (p[0] - bend.p1[0]) * nx + (p[1] - bend.p1[1]) * ny]; };
+    var ms = segs.map(function (g) { return [map(g[0]), map(g[1])]; });
+    var tmin = Infinity, tmax = -Infinity, cand = {};
+    ms.forEach(function (g) {
+      g.forEach(function (p) {
+        tmin = Math.min(tmin, p[0]); tmax = Math.max(tmax, p[0]);
+        if (p[1] > 0.5 && p[1] <= ext + 1e-6) { var key = Math.round(p[1] * 10); if (cand[key] === undefined || p[1] > cand[key]) cand[key] = p[1]; }
+      });
+    });
+    var list = Object.keys(cand).map(function (k) { return cand[k]; }).sort(function (a, b) { return b - a; });
+    var inside = function (t, s) {
+      var c = 0;
+      for (var i = 0; i < ms.length; i++) {
+        var a = ms[i][0], e = ms[i][1];
+        if ((a[1] > s) !== (e[1] > s) && a[0] + (s - a[1]) / (e[1] - a[1]) * (e[0] - a[0]) > t) c++;
+      }
+      return c % 2 === 1;
+    };
+    for (var k = 0; k < list.length; k++) {
+      var s = list[k] - 0.05, run = 0, best = 0;
+      for (var t = tmin; t <= tmax; t += 1) {
+        if (inside(t, s)) { run++; if (run > best) best = run; } else run = 0;
+      }
+      if (best >= minW) return list[k];
+    }
+    return ext;
+  }
+
+  var api = { parse: parse, buildModel: buildModel, sideExtent: sideExtent, gaugeExtent: gaugeExtent, defaultSide: defaultSide, sameFlange: sameFlange };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.DXF = api;
 })(typeof window !== 'undefined' ? window : this);

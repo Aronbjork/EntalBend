@@ -18,7 +18,7 @@
     hover: null, outputEdited: false, simStep: 0, simDrag: null, simProgress: 0, simTab: '3d'
   };
 
-  var SETTINGS_IDS = ['progNo', 'job', 'material', 'thickness', 'punch', 'die', 'defAngle',
+  var SETTINGS_IDS = ['progNo', 'job', 'material', 'thickness', 'punch', 'die', 'defAngle', 'gaugeMin',
     'outFormat'];
 
   /* ------------------------------------------------------------------ status */
@@ -111,6 +111,15 @@
 
   /* ------------------------------------------------------------------ rows / metrics */
 
+  /* Distance to the edge the backgauge touches (small tabs ignored), cached per model. */
+  function gaugeEdge(b, sign) {
+    var m = state.model, minW = parseFloat($('gaugeMin').value) || 0;
+    if (!m._gx) m._gx = {};
+    var key = b.id + '|' + sign + '|' + minW;
+    if (m._gx[key] === undefined) m._gx[key] = DXF.gaugeExtent(b, sign, outlineSegs(), m.outlinePts, minW);
+    return m._gx[key];
+  }
+
   function computeRows() {
     var m = state.model;
     if (!m) return [];
@@ -118,7 +127,7 @@
     state.seq.forEach(function (e, i) {
       var b = m.bends.filter(function (x) { return x.id === e.id; })[0];
       if (!b) return;
-      var xEdge = DXF.sideExtent(b, e.sign, m.outlinePts);
+      var xEdge = gaugeEdge(b, e.sign);
       var flip = e.dir !== prevDir;
       prevDir = e.dir;
       rows.push({ n: i + 1, e: e, b: b, xEdge: xEdge, xFinal: xEdge + e.offset, flip: flip, same: null });
@@ -552,7 +561,7 @@
     return {
       segs: segs, bend: r.b, sign: e.sign, shift: parseFloat($('simShift').value) || 0, x: r.xFinal,
       z1: ax.z1, z2: ax.z2, r1: ax.r1, r2: ax.r2, angle: e.angle, dir: e.dir,
-      edgeGauge: r.xEdge, edgeOther: DXF.sideExtent(r.b, -e.sign, state.model.outlinePts),
+      edgeGauge: r.xEdge, edgeOther: gaugeEdge(r.b, -e.sign),
       clipV: r.same ? r.same.dist : undefined
     };
   }
@@ -737,7 +746,7 @@
 
   /* Programs are kept in IndexedDB in this browser. "Save as file" / "Open file" move them
    * between PCs or keep a backup, since clearing browser data also clears the library. */
-  var PROGRAM_FIELDS = ['progNo', 'job', 'material', 'thickness', 'punch', 'die', 'defAngle'];
+  var PROGRAM_FIELDS = ['progNo', 'job', 'material', 'thickness', 'punch', 'die', 'defAngle', 'gaugeMin'];
   var dbPromise = null;
 
   function openDb() {
@@ -1074,7 +1083,7 @@
         drawSim();
       });
     });
-    ['simZoom', 'simFlip', 'simShift', 'usbZ', 'usbR', 'thickness', 'die', 'punch'].forEach(function (id) { $(id).addEventListener('input', function () { renderTable(); }); });
+    ['simZoom', 'simFlip', 'simShift', 'usbZ', 'usbR', 'thickness', 'die', 'punch', 'gaugeMin'].forEach(function (id) { $(id).addEventListener('input', function () { renderTable(); }); });
     $('clearSeq').addEventListener('click', function () { state.seq = []; renderTable(); });
 
     SETTINGS_IDS.forEach(function (id) {
