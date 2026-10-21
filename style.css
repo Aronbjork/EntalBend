@@ -203,19 +203,6 @@ td.notes { white-space: normal; min-width: 220px; }
   border-radius: var(--radius-s); padding: 10px 14px; margin-bottom: 14px; font-size: 13px;
 }
 
-/* Serial log */
-.log {
-  height: 200px; overflow: auto; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-s);
-  padding: 8px 12px; font: 12px/1.5 var(--font-mono);
-}
-.log .ln { white-space: pre-wrap; word-break: break-all; }
-.log .tx { color: var(--brand-dark); }
-:root[data-theme="dark"] .log .tx { color: var(--brand); }
-@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .log .tx { color: var(--brand); } }
-.log .rx { color: var(--ink); }
-.log .sys { color: var(--muted); }
-.log .err { color: var(--crit); }
-
 @media (max-width: 1080px) {
   .layout { grid-template-columns: 1fr; }
   .viewer { position: static; }
@@ -227,3 +214,27 @@ td.notes { white-space: normal; min-width: 220px; }
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; animation: none !important; }
 }
+.seq input.axis { width: 64px; }
+
+/* Bend simulator */
+.sim { margin-bottom: 20px; }
+.simCv { display: block; width: 100%; background: var(--canvas); border-radius: var(--radius-s); margin-bottom: 10px; }
+.simInfo { margin: 6px 0 10px; line-height: 1.6; }
+.simInfo .bad { color: var(--crit); font-weight: 600; }
+.seq tbody tr.sel td { background: var(--brand-tint); }
+.seq tbody tr[data-i] { cursor: pointer; }
+
+.sim3d { position: relative; height: clamp(600px, 82vh, 1000px); background: var(--canvas); border-radius: var(--radius-s); overflow: hidden; margin-bottom: 10px; }
+.sim3d canvas { display: block; width: 100%; height: 100%; }
+.simTabs { display: flex; gap: 8px; align-items: center; margin: 4px 0 10px; flex-wrap: wrap; }
+.simTabs .mini.on { background: var(--brand); color: #fff; border-color: var(--brand); }
+
+.stepSet { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); }
+.stepSet h3 { margin: 0 0 8px; font-size: 14px; }
+.stepSet .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+.stepSet label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--ink-2); }
+.stepSet .tools { margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+
+#usbEdit { margin-bottom: 20px; }
+#usbEdit .bad { color: var(--crit); }
+#usbEdTable input.axis { width: 72px; }

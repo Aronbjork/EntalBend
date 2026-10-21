@@ -90,6 +90,24 @@
     </section>
 
     <section class="panel">
+      <h2>USB export (Operateur 2000)</h2>
+      <div class="warn">Writes the program in the machine's own format: <b>N.PLI</b> plus an updated <b>FPROG.DAT</b>. Back up the stick first, and test with a simple part. Uses Program no., Job reference (13 chars), Thickness, Punch and Die from the Program panel. Program no. must be 1-98.</div>
+      <div class="fields">
+        <label>Angle added (overbend)<input id="usbAdd" type="number" step="0.1" value="0"></label>
+        <label>Y penetration (mm)<input id="usbY" type="number" step="0.01" placeholder="empty = 0, machine calculates"></label>
+        <label>Default Z1/Z2 (mm)<input id="usbZ" type="number" step="any" value="60" title="Used for bends where Z is left empty in the table"></label>
+        <label>Default R1/R2 (mm)<input id="usbR" type="number" step="any" value="0.1" title="Backgauge height, used where R is left empty in the table"></label>
+      </div>
+      <div class="toolbar">
+        <button class="btn primary" id="btnUsbDir" type="button">Write to USB folder</button>
+        <label class="mini" title="Pick the FPROG.DAT from the stick, then both files are downloaded">Download files
+          <input type="file" id="usbFprog" accept=".dat,.DAT" hidden>
+        </label>
+      </div>
+      <p class="muted small" id="usbInfo">Y is not calculated here. Leave it empty to write 0 and let the control calculate it from the angle (retype the angle on each step if it does not). Or type the value the control shows.</p>
+    </section>
+
+    <section class="panel">
       <details open>
         <summary>Bend line detection</summary>
         <div class="fields">
@@ -123,17 +141,74 @@
           <th title="Which side of the bend line the backgauge measures to">Gauge side</th>
           <th>To edge</th>
           <th title="Added to the edge distance. Use it for a second bend on a flange that already has a bend.">Offset</th>
-          <th>Backgauge X</th><th>Notes</th><th></th>
+          <th>Backgauge X</th><th title="Finger positions. Empty uses the default from the USB export panel.">Z1</th><th>Z2</th><th title="Backgauge height. Empty uses the default from the USB export panel.">R1</th><th>R2</th><th>Notes</th><th></th>
         </tr>
       </thead>
       <tbody id="seqBody"></tbody>
     </table>
   </div>
+  <div class="stepSet" id="stepSettings"></div>
   <p class="muted small">Up folds the flange toward you as drawn; Down folds it away, so the part is turned over (FLIP). Distances are flat-pattern distances from the bend line to the edge, in mm.</p>
 </section>
 
-<section class="grid2">
-  <div class="panel">
+<section class="panel sim">
+  <div class="rowHead">
+    <h2>Bend simulator</h2>
+    <div class="toolbar">
+      <button class="mini" id="simPrev" type="button" title="Previous bend">&#9664;</button>
+      <span id="simStepLabel" class="muted">No bend</span>
+      <button class="mini" id="simNext" type="button" title="Next bend">&#9654;</button>
+      <button class="mini" id="simPlay" type="button" title="Bend the part">Bend &#9654;</button>
+      <label class="inline">Progress<input type="range" id="simProg" min="0" max="100" value="0" style="width:110px"></label>
+      <button class="mini" id="simAuto" type="button" title="Place the fingers on the gauged edge of the part">Auto fingers</button>
+      <label class="inline">Part shift (mm)<input id="simShift" type="number" step="1" value="0" style="width:70px"></label>
+    </div>
+  </div>
+  <div class="simTabs">
+    <button class="mini on" type="button" data-tab="3d">3D</button>
+    <button class="mini" type="button" data-tab="top">Top view</button>
+    <button class="mini" type="button" id="simReset" title="Reset the 3D camera">Reset view</button>
+    <label class="check" title="Turn the punch around if the drawing orientation is wrong"><input type="checkbox" id="simFlip"> Flip punch</label>
+    <label class="check" id="simZoomWrap" hidden><input type="checkbox" id="simZoom" checked> Zoom to part</label>
+  </div>
+  <div id="sim3dWrap" class="sim3d"></div>
+  <div id="simTopWrap" hidden>
+    <canvas id="simTop" class="simCv"></canvas>
+    <canvas id="simSide" class="simCv"></canvas>
+  </div>
+  <div id="simInfo" class="simInfo muted small">Select a bend in the sequence to see the backgauge fingers.</div>
+  <p class="muted small">Z1 moves the left finger to the left of the centre, Z2 the right finger to the right (100 mm wide, Z = finger centre, machine 2500 mm). R1/R2 raise each finger's support ledge above the die top. Fingers are placed on the gauged edge automatically when you add a bend; typing in Z1/Z2 stops that, and Auto fingers brings it back. The flat pattern is folded bend by bend (earlier bends are included) and assumes every bend line runs across the whole part. Punch and die are approximate shapes (punch tip 88&deg;, die V width from the die reference). In the top view you can drag the Z1/Z2 fingers. Click a row in the bend table to simulate that step.</p>
+</section>
+
+<section class="panel" id="usbEdit">
+  <div class="rowHead">
+    <h2>Programs on the USB stick</h2>
+    <div class="toolbar">
+      <button class="btn primary" id="usbOpenDir" type="button">Open USB folder</button>
+      <label class="mini" title="Select FPROG.DAT and the .PLI files">Open files
+        <input type="file" id="usbOpenFiles" accept=".dat,.pli,.DAT,.PLI" multiple hidden>
+      </label>
+    </div>
+  </div>
+  <p class="muted small" id="usbEdStatus">Open the stick's folder (or a copy of it) to load the programs that are on it, edit the steps and save them back. The drawing is not stored on the stick, so these programs are edited as numbers only. Back up the stick first.</p>
+  <div id="usbRepairBox"></div>
+  <div class="tableWrap" id="usbProgList"></div>
+  <div id="usbEditor" hidden>
+    <div class="fields cols" style="margin-top:12px">
+      <label>Save as program no.<input id="usbEdNo" type="number" min="1" max="98" step="1"></label>
+      <label>Reference (13 chars)<input id="usbEdRef" maxlength="13"></label>
+      <label>Thickness (mm)<input id="usbEdTh" type="number" step="0.1"></label>
+    </div>
+    <p class="muted small" id="usbEdInfo"></p>
+    <div class="tableWrap"><table class="seq" id="usbEdTable"></table></div>
+    <div class="toolbar" style="margin-top:12px">
+      <button class="btn primary" id="usbEdSave" type="button">Save to stick</button>
+      <span class="muted small">Change the program number to save a copy. Only the changed values are rewritten; Z1 + Z2 below 120 is highlighted. The end record is kept as it is.</span>
+    </div>
+  </div>
+</section>
+
+<section class="panel">
     <h2>Program output</h2>
     <div class="toolbar">
       <label class="inline">Format
@@ -149,52 +224,16 @@
       <span class="muted small" id="outEditedNote" hidden>Edited by hand. Regenerate to discard.</span>
     </div>
     <textarea id="outText" spellcheck="false" rows="16"></textarea>
-  </div>
-
-  <div class="panel">
-    <h2>RS232 (Web Serial)</h2>
-    <div class="warn">
-      The manuals for this control do not describe an RS232 program format, so the text on the left is sent as it is. The default port settings (9600 baud, 7 data bits, even parity, XON/XOFF) are a common setup for older controls, not confirmed for the Operateur 2000. Use the receive log to capture what the control sends, then edit the output to match. Only send when the machine is idle.
-    </div>
-    <div class="warn" id="serialSupport" hidden>This browser has no Web Serial support. Use Chrome or Edge on a desktop computer.</div>
-    <div class="fields cols">
-      <label>Baud rate
-        <select id="baud">
-          <option>1200</option><option>2400</option><option>4800</option><option selected>9600</option>
-          <option>19200</option><option>38400</option><option>57600</option><option>115200</option>
-        </select>
-      </label>
-      <label>Data bits<select id="dataBits"><option selected>7</option><option>8</option></select></label>
-      <label>Parity<select id="parity"><option value="none">None</option><option value="even" selected>Even</option><option value="odd">Odd</option></select></label>
-      <label>Stop bits<select id="stopBits"><option selected>1</option><option>2</option></select></label>
-      <label>Flow control<select id="flow"><option value="xonxoff" selected>XON/XOFF</option><option value="hardware">RTS/CTS</option><option value="none">None</option></select></label>
-      <label>Line ending<select id="eol"><option value="CRLF" selected>CR+LF</option><option value="LF">LF</option><option value="CR">CR</option></select></label>
-      <label>Delay per line (ms)<input id="lineDelay" type="number" min="0" step="10" value="100"></label>
-    </div>
-    <div class="toolbar">
-      <button class="btn primary" id="btnConnect" type="button">Connect</button>
-      <button class="btn" id="btnDisconnect" type="button" disabled>Disconnect</button>
-      <button class="btn" id="btnSend" type="button" disabled>Send program</button>
-      <button class="btn" id="btnStop" type="button" disabled>Stop</button>
-      <span class="muted small" id="serialState">Not connected</span>
-    </div>
-    <div class="toolbar">
-      <input id="manualText" placeholder="Send a single line (cable test)" class="grow">
-      <button class="mini" id="btnManual" type="button" disabled>Send line</button>
-    </div>
-    <div class="toolbar">
-      <label class="inline">Show received data as
-        <select id="rxMode"><option value="ascii">Text</option><option value="hex">Hex</option></select>
-      </label>
-      <button class="mini" id="btnClearLog" type="button">Clear log</button>
-      <button class="mini" id="btnSaveLog" type="button">Save log</button>
-    </div>
-    <div class="log" id="log" aria-live="polite"></div>
-  </div>
 </section>
 </div>
 
 <script src="dxf.js"></script>
+<script src="pli.js"></script>
+<script src="vendor/three.min.js"></script>
+<script src="vendor/OrbitControls.js"></script>
+<script src="sim.js"></script>
+<script src="sim3d.js"></script>
 <script src="app.js"></script>
+<script src="usbedit.js"></script>
 </body>
 </html>
