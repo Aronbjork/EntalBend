@@ -142,7 +142,7 @@
           <th title="Which side of the bend line the backgauge measures to">Gauge side</th>
           <th>To edge</th>
           <th title="Added to the edge distance. Use it for a second bend on a flange that already has a bend.">Offset</th>
-          <th>Backgauge X</th><th title="Finger positions. Empty uses the default from the USB export panel.">Z1</th><th>Z2</th><th title="Backgauge height. Empty uses the default from the USB export panel.">R1</th><th>R2</th><th>Notes</th><th></th>
+          <th>Backgauge X</th><th title="Ticked: the fingers are placed on the gauged edge automatically and follow the part. Typing Z1/Z2 or dragging a finger unticks it.">Auto Z</th><th title="Finger positions. Empty uses the default from the USB export panel. Values typed by hand move with the part when its station moves.">Z1</th><th>Z2</th><th title="Backgauge height. Empty uses the default from the USB export panel.">R1</th><th>R2</th><th>Notes</th><th></th>
         </tr>
       </thead>
       <tbody id="seqBody"></tbody>
@@ -178,7 +178,35 @@
     <canvas id="simSide" class="simCv"></canvas>
   </div>
   <div id="simInfo" class="simInfo muted small">Select a bend in the sequence to see the backgauge fingers.</div>
-  <p class="muted small">Z1 moves the left finger to the left of the centre, Z2 the right finger to the right (100 mm wide, Z = finger centre, machine 2500 mm). R1/R2 raise each finger's support ledge above the die top. Fingers are placed on the gauged edge automatically when you add a bend; typing in Z1/Z2 stops that, and Auto fingers brings it back. The flat pattern is folded bend by bend (earlier bends are included) and assumes every bend line runs across the whole part. Punch and die are approximate shapes (punch tip 88&deg;, die V width from the die reference). In the top view you can drag the Z1/Z2 fingers. Click a row in the bend table to simulate that step.</p>
+  <div class="stepSet toolSet">
+    <h3>Tooling setup (stations)</h3>
+    <div class="secLib">
+      <div class="tableWrap">
+        <table class="plain secTable">
+          <thead><tr><th>Punch section (mm)</th><th>How many</th><th>Note</th><th title="Pieces the stations below use">In use</th><th></th></tr></thead>
+          <tbody id="tlLib"></tbody>
+        </table>
+      </div>
+      <div class="tools">
+        <button class="mini" id="tlAdd" type="button">Add section</button>
+        <span class="muted small" id="tlLibSum"></span>
+      </div>
+    </div>
+    <div class="grid">
+      <label title="The die is one piece. Its length limits how many stations fit.">Die length (mm)<input id="tlDieLen" type="number" step="1" min="1" value="835"></label>
+      <label title="Where the middle of the die sits, from the machine centre (- = left)">Die centre from machine centre (mm)<input id="tlDieC" type="number" step="1" value="0"></label>
+      <label title="Space left between the punch and a flange that is already bent, per side">Clearance to flanges (mm/side)<input id="tlClear" type="number" step="0.5" min="0" value="1"></label>
+      <label title="How much shorter than the bend line the punch may be, per end">Punch shorter than bend (mm/end)<input id="tlShort" type="number" step="1" min="0" value="5"></label>
+      <label title="Smallest gap between two stations. It is made larger when the part sticks out further.">Min. gap between stations (mm)<input id="tlGap" type="number" step="5" min="0" value="20"></label>
+    </div>
+    <div class="tools">
+      <label class="check" title="Place each bend at its station in the simulator. The fingers (automatic Z) follow the part."><input type="checkbox" id="tlUse"> Use stations in the simulator</label>
+      <label class="check"><input type="checkbox" id="tlPics" checked> 3D pictures in the PDF</label>
+      <button class="btn primary" id="tlPdf" type="button">Tooling setup PDF</button>
+    </div>
+    <div id="tlPlan" class="small"></div>
+  </div>
+  <p class="muted small">Z1 moves the left finger to the left of the centre, Z2 the right finger to the right (100 mm wide, Z = finger centre, machine 2500 mm). A finger may go past the centre (negative Z); Z1 + Z2 must stay at least 120. R1/R2 raise each finger's support ledge above the die top. Fingers are placed on the gauged edge automatically when you add a bend; typing in Z1/Z2 stops that, and Auto fingers brings it back. The flat pattern is folded bend by bend (earlier bends are included) and assumes every bend line runs across the whole part. Punch and die are approximate shapes (punch tip 88&deg;, die with V8 and V12 slots, bending in the V8 at the back). In the top view you can drag the Z1/Z2 fingers. Click a row in the bend table to simulate that step.</p>
 </section>
 
 <section class="panel" id="usbEdit">
@@ -234,6 +262,8 @@
 <script src="vendor/OrbitControls.js"></script>
 <script src="sim.js"></script>
 <script src="sim3d.js"></script>
+<script src="pdf.js"></script>
+<script src="tooling.js"></script>
 <script src="app.js"></script>
 <script src="usbedit.js"></script>
 </body>

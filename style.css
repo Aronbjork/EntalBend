@@ -1,4 +1,4 @@
-/* Design tokens - same as AroNet / EntalCalc so the apps look like one system. */
+﻿/* Design tokens - same as AroNet / EntalCalc so the apps look like one system. */
 :root {
   color-scheme: light;
   --brand: #2E9488; --brand-dark: #237268; --brand-light: #D1E6E3; --brand-tint: #EAF4F2; --accent: #FDC656;
@@ -234,6 +234,22 @@ td.notes { white-space: normal; min-width: 220px; }
 .stepSet .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
 .stepSet label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--ink-2); }
 .stepSet .tools { margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+
+.toolSet .grid label input { padding: 6px 8px; font-size: 13px; }
+.secLib { margin-bottom: 12px; }
+.secLib .tableWrap { margin-top: 0; }
+.secTable input { padding: 4px 8px; font-size: 13px; }
+.secTable input[type=number] { width: 90px; }
+.secTable td.used { font-variant-numeric: tabular-nums; color: var(--ink-2); }
+#tlPlan { margin-top: 10px; }
+#tlPlan .tools { margin-top: 8px; }
+.stnTable td.move { display: flex; gap: 4px; align-items: center; }
+.stnTable td.move input { width: 70px; padding: 3px 6px; font-size: 13px; text-align: right; }
+.stnTable td.move .mini { padding: 2px 8px; }
+td.ctr { text-align: center; }
+.tag.stn { background: var(--brand-tint); color: var(--brand-dark); }
+#tlPlan .bad { color: var(--crit); font-weight: 600; }
+#tlPlan table { margin-top: 0; }
 
 #usbEdit { margin-bottom: 20px; }
 #usbEdit .bad { color: var(--crit); }

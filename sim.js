@@ -108,6 +108,14 @@
     /* die / bend line across the whole machine */
     ctx.strokeStyle = C.grid; ctx.lineWidth = 2;
     ctx.beginPath(); ctx.moveTo(X(Math.max(uLo, -MACHINE_W / 2)), Y(0)); ctx.lineTo(X(Math.min(uHi, MACHINE_W / 2)), Y(0)); ctx.stroke();
+    /* tool sections of the stations (punch over the die), when a station plan is in use */
+    if (d.tools) {
+      d.tools.punch.forEach(function (t, i) {
+        ctx.fillStyle = C.muted; ctx.globalAlpha = i % 2 ? 0.45 : 0.3;
+        ctx.fillRect(X(t[0]), Y(6), (t[1] - t[0]) * k - 1, 12 * k);
+      });
+      ctx.globalAlpha = 1;
+    }
     /* centre line */
     ctx.setLineDash([6, 5]); ctx.lineWidth = 1;
     ctx.beginPath(); ctx.moveTo(X(0), Y(vHi)); ctx.lineTo(X(0), Y(vLo)); ctx.stroke(); ctx.setLineDash([]);

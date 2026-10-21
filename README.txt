@@ -17,6 +17,8 @@ index.html   the page
 style.css    layout and colours
 dxf.js       DXF reading and bend geometry
 app.js       drawing view, bend table, output and USB export
+tooling.js   tooling stations and the set-up PDF
+pdf.js       small PDF writer
 sample.dxf   test part: 3 dashed bend lines (two close together on the left flange)
 
 How to use
@@ -90,8 +92,8 @@ part is placed off-centre. Drag the Z1/Z2 fingers sideways to set Z for that ben
 3D simulator
 ------------
 The Bend simulator panel has a 3D view (default) and a Top view. The 3D view folds the flat pattern bend by bend,
-places the current bend over the die, and shows an approximate punch (88 deg tip) and die (V width = last two digits
-of the die reference, e.g. 3008 = V8), plus the Z1/Z2 fingers. R1/R2 raise each finger above the die top (R = lower edge of the finger arm; the sheet never rests on it).
+places the current bend over the die, and shows an approximate punch (88 deg tip) and die (V8 slot in use), plus the
+Z1/Z2 fingers. A finger may go past the centre (negative Z) as long as Z1 + Z2 is at least 120. R1/R2 raise each finger above the die top (R = lower edge of the finger arm; the sheet never rests on it).
 Use Bend (animation) or the Progress slider to bend the part, and the arrows or a table row to step through bends.
 Fingers are placed on the gauged edge when a bend is added. Typing Z1/Z2 stops that; Auto fingers restores it.
 Limits: bend lines are assumed to run across the whole part, and tool shapes are approximations.
@@ -120,9 +122,46 @@ if it is the other way round. Other punch references use the same shape. The die
 
 Die and ram in the 3D simulator
 -------------------------------
-The die is drawn from a photo of the real die (60 mm wide, 48 mm high; V groove 38 mm from the back edge and 22 mm from
-the front edge, shoulder radii, relief groove). V width = last two digits of the die reference. The upper beam is red with
-an AMADA lettering on its front. Approximate, not a manufacturer drawing.
+The die is drawn from a photo of the real die (60 mm wide, 48 mm high) with two V slots. Bends are made in the small slot
+nearest the back (V8, centre 15.75 mm from the back edge). The V12 slot (22 mm from the front edge) is only drawn. The upper beam is red with an AMADA lettering on its
+front. Approximate, not a manufacturer drawing.
+
+Tooling setup (stations) and PDF
+--------------------------------
+In the Bend simulator panel, under "Tooling setup (stations)". Used to rig the press brake with several stations so a
+whole part is bent in one set-up, for example a long punch for the first bends of a box and a short sectioned punch
+that fits between the flanges for the last bends.
+- Punch section library: one row per section length with how many you have (and a note, e.g. "horn left").
+  Add section adds a row, X removes it. It is kept in this browser. Each station takes its pieces from the library,
+  so a piece is never used twice; the "In use" column shows how many of each the current plan needs.
+- The die is one piece (not sectioned): set its length and where its middle is (from the machine centre). All
+  stations must fit over it. When they do not, open bends are tried with the shortest punch that does the job
+  instead of a full length one; if it still does not fit you get a warning.
+- For every bend the folded part (earlier bends included) is checked against the punch and die profiles. Flanges that
+  are already bent, and flat material past the end of the bend line, limit how long the punch may be ("gap between
+  flanges"). The punch may be shorter than the bend line by "Punch shorter than bend" at each end, and keeps
+  "Clearance to flanges" from a flange on each side.
+- Bends that can use the same punch length share a station. Stations are placed left to right in the order they are
+  first used, centred on the machine, with a gap wide enough for the part to clear the next station.
+- "Use stations in the simulator" places each bend at its station in the 3D and top views, and the Notes column of the
+  bend table shows each bend's station. Part shift is added on top.
+- Z1/Z2 follow the part to its station, so the table, the PDF and the USB export match the set-up:
+  "Auto Z" ticked (the bend table column) = the fingers are placed on the gauged edge automatically. Typing Z1/Z2 or
+  dragging a finger unticks it; ticking it again puts the fingers back on automatic. Fingers set by hand keep their place
+  on the part: when the part moves (other station, a station moved, Part shift, stations switched off) Z1 and Z2 move
+  by the same amount. Z1 + Z2 >= 120 still applies.
+- Moving stations: the station table has a Move (mm) field and arrows (10 mm, Shift+click 1 mm) per station, + = right.
+  The bends at that station and their fingers move with it. "Back to planned positions" undoes the moves. Moves are saved
+  with the program. Warnings when stations overlap, are closer than the part needs to clear the other punch, stick out
+  past the die, or the part reaches past the bed.
+- "Tooling setup PDF" writes the set-up sheet: bed layout with positions from the machine centre, the sections of
+  each station left to right, the bend list (station, part position, X, Z, R) and, if ticked, a 3D picture per bend.
+  It turns on "Use stations" so the program matches the sheet.
+- Warnings: part hits the punch or die (try another bend order; the die cannot be sectioned, so a flange bent down
+  into it cannot be avoided by the set-up), a flange reaches the punch holder (about 147 mm above the punch tip) or
+  hangs lower than the die, not enough sections, stations longer than the die or the bed.
+Limits: all sections are assumed to be the 814 punch shape; gooseneck punches and horn (ear) pieces are
+not modelled. Check the first part. Files: tooling.js (planning and the sheet), pdf.js (PDF writer, no library).
 
 Small tabs on the gauged edge
 -----------------------------

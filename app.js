@@ -15,11 +15,13 @@
     gap: 6, minLen: 5, scale: 1,
     seq: [],                       // [{id, angle, dir:'UP'|'DOWN', sign:+1|-1, offset}]
     view: { ox: 0, oy: 0, k: 1 }, viewTouched: false,   // refit on resize until the user zooms or pans
-    hover: null, outputEdited: false, simStep: 0, simDrag: null, simProgress: 0, simTab: '3d'
+    hover: null, outputEdited: false, simStep: 0, simDrag: null, simProgress: 0, simTab: '3d',
+    plan: null, stationMoves: {}   // stationMoves: { A: mm } stations moved by hand
   };
 
   var SETTINGS_IDS = ['progNo', 'job', 'material', 'thickness', 'punch', 'die', 'defAngle', 'gaugeMin',
-    'outFormat'];
+    'outFormat', 'tlDieLen', 'tlDieC', 'tlClear', 'tlShort', 'tlGap'];
+  var SETTINGS_CHECKS = ['tlUse', 'tlPics'];
 
   /* ------------------------------------------------------------------ status */
 
@@ -38,7 +40,7 @@
     reader.onload = function () {
       var text = String(reader.result);
       if (/\.(json|entalbend)$/i.test(file.name)) importProgram(text, file.name);
-      else { state.currentName = ''; $('progName').value = ''; loadText(text, file.name); renderLibrary(); }
+      else { state.currentName = ''; $('progName').value = ''; state.stationMoves = {}; loadText(text, file.name); renderLibrary(); }
     };
     reader.onerror = function () { setStatus('Could not read the file.', true); };
     reader.readAsText(file);
@@ -150,10 +152,12 @@
 
   function renderTable() {
     var rows = computeRows();
+    refreshPlan(rows);
+    followShift(rows);
     applyAuto(rows);
     var tb = $('seqBody');
     if (!rows.length) {
-      tb.innerHTML = '<tr><td colspan="15" class="empty">No bends selected. Click the dashed bend lines in the drawing in the order you want to bend them.</td></tr>';
+      tb.innerHTML = '<tr><td colspan="16" class="empty">No bends selected. Click the dashed bend lines in the drawing in the order you want to bend them.</td></tr>';
     } else {
       tb.innerHTML = rows.map(function (r, i) {
         return '<tr data-i="' + i + '"' + (i === state.simStep ? ' class="sel"' : '') + '>' +
@@ -167,11 +171,13 @@
           '<td class="num">' + f2(r.xEdge) + '</td>' +
           '<td><input type="number" data-f="offset" step="0.1" value="' + r.e.offset + '"' + (r.same ? ' class="hl"' : '') + '></td>' +
           '<td class="num strong" data-x>' + f2(r.xFinal) + '</td>' +
+          '<td class="ctr"><input type="checkbox" data-f="zAuto"' + (r.e.zAuto ? ' checked' : '') + ' title="Automatic fingers"></td>' +
           ['z1', 'z2', 'r1', 'r2'].map(function (k) {
             return '<td><input type="number" class="axis" data-f="' + k + '" step="any" placeholder="' + usbDefault(k) + '" value="' +
               (r.e[k] === null || r.e[k] === undefined ? '' : r.e[k]) + '"></td>';
           }).join('') +
-          '<td class="notes">' + (r.flip ? '<span class="tag flip">FLIP</span>' : '') +
+          '<td class="notes">' + (state.plan && state.plan.bends[i] ? '<span class="tag stn">Station ' + state.plan.bends[i].stationName + '</span>' : '') +
+            (r.flip ? '<span class="tag flip">FLIP</span>' : '') +
             (r.same ? '<span class="tag same">2nd bend on the flange of #' + r.same.n + ': X = distance to it (' + f2(r.same.dist) + ' mm), not to the edge</span>' : '') + '</td>' +
           '<td class="acts"><button class="mini" type="button" data-act="up" title="Earlier">▲</button>' +
             '<button class="mini" type="button" data-act="down" title="Later">▼</button>' +
@@ -187,6 +193,8 @@
 
   function updateDerived() {
     var rows = computeRows();
+    refreshPlan(rows);
+    followShift(rows);
     applyAuto(rows);
     var trs = $('seqBody').querySelectorAll('tr[data-i]');
     rows.forEach(function (r, i) {
@@ -559,10 +567,10 @@
   function simData(r, ax, segs) {
     var e = r.e;
     return {
-      segs: segs, bend: r.b, sign: e.sign, shift: parseFloat($('simShift').value) || 0, x: r.xFinal,
+      segs: segs, bend: r.b, sign: e.sign, shift: rowShift(r), x: r.xFinal,
       z1: ax.z1, z2: ax.z2, r1: ax.r1, r2: ax.r2, angle: e.angle, dir: e.dir,
       edgeGauge: r.xEdge, edgeOther: gaugeEdge(r.b, -e.sign),
-      clipV: r.same ? r.same.dist : undefined
+      clipV: r.same ? r.same.dist : undefined, tools: state.plan ? state.plan.tools : null
     };
   }
 
@@ -621,10 +629,33 @@
     simAnim = requestAnimationFrame(tick);
   }
 
-  function dieV() {
-    var m = /(\d{2})\s*$/.exec($('die').value.trim());
-    var v = m ? parseInt(m[1], 10) : 8;
-    return v >= 3 && v <= 80 ? v : 8;
+  /* The die has V8 and V12 slots; bending is always done in the V8 slot at the back. */
+  function dieV() { return Sim3D.DIE_V; }
+
+  function partBox() {
+    var mn = [Infinity, Infinity], mx = [-Infinity, -Infinity];
+    state.model.outlinePts.forEach(function (p) { mn[0] = Math.min(mn[0], p[0]); mn[1] = Math.min(mn[1], p[1]); mx[0] = Math.max(mx[0], p[0]); mx[1] = Math.max(mx[1], p[1]); });
+    return { mn: mn, mx: mx, span: Math.max(mx[0] - mn[0], mx[1] - mn[1]) };
+  }
+
+  function simBends(rows) {
+    return rows.map(function (q) { return { id: q.b.id, p1: q.b.p1, p2: q.b.p2, len: q.b.len, angle: q.e.angle, dir: q.e.dir, sign: q.e.sign }; });
+  }
+
+  function meshKey(bends, segs) {
+    var bx = partBox();
+    return bends.map(function (q) { return q.id + ':' + q.p1 + ':' + q.p2; }).join('|') + '#' + segs.length + '#' + bx.mn + bx.mx;
+  }
+
+  /* Everything the 3D view needs for bend i of rows at the given progress. */
+  function sim3dData(rows, i, progress, segs) {
+    var r = rows[i], ax = axisValues(r.e), d = simData(r, ax, segs), A = Sim.analyze(d), bends = simBends(rows);
+    return {
+      key: meshKey(bends, segs), segs: segs, bends: bends, step: i, progress: progress, shift: d.shift, x: r.xFinal,
+      z1: ax.z1, z2: ax.z2, r1: ax.r1, r2: ax.r2, thickness: parseFloat($('thickness').value) || 1, dieV: dieV(),
+      flipPunch: $('simFlip').checked, punchLen: /^(835|415|800)$/.test($('punch').value.trim()) ? parseInt($('punch').value, 10) : 0,
+      fingerOk: A.fingers.map(function (f) { return f.cover >= 0.4; }), span: partBox().span, tools: d.tools
+    };
   }
 
   function drawSim() {
@@ -643,16 +674,7 @@
     var d = simData(r, ax, segs);
     var A = Sim.analyze(d);
     if (is3d) {
-      var mn = [Infinity, Infinity], mx = [-Infinity, -Infinity];
-      m.outlinePts.forEach(function (p) { mn[0] = Math.min(mn[0], p[0]); mn[1] = Math.min(mn[1], p[1]); mx[0] = Math.max(mx[0], p[0]); mx[1] = Math.max(mx[1], p[1]); });
-      var rowsB = cur.rows.map(function (q) { return { id: q.b.id, p1: q.b.p1, p2: q.b.p2, len: q.b.len, angle: q.e.angle, dir: q.e.dir, sign: q.e.sign }; });
-      Sim3D.update({
-        key: rowsB.map(function (q) { return q.id + ':' + q.p1 + ':' + q.p2; }).join('|') + '#' + segs.length + '#' + mn + mx,
-        segs: segs, bends: rowsB, step: state.simStep, progress: state.simProgress, shift: d.shift, x: r.xFinal,
-        z1: ax.z1, z2: ax.z2, r1: ax.r1, r2: ax.r2, thickness: parseFloat($('thickness').value) || 1, dieV: dieV(),
-        flipPunch: $('simFlip').checked, punchLen: /^(835|415|800)$/.test($('punch').value.trim()) ? parseInt($('punch').value, 10) : 0,
-        fingerOk: A.fingers.map(function (f) { return f.cover >= 0.4; }), span: Math.max(mx[0] - mn[0], mx[1] - mn[1])
-      }, $('sim3dWrap'));
+      Sim3D.update(sim3dData(cur.rows, state.simStep, state.simProgress, segs), $('sim3dWrap'));
     } else {
       Sim.drawTop(top, d, A, { zoom: $('simZoom').checked, range: state.simDrag ? state.simDrag.range : null });
       Sim.drawSide(side, d);
@@ -663,7 +685,185 @@
     info.innerHTML = '<div>Backgauge X ' + f2(r.xFinal) + ' mm \u00b7 R1 ' + ax.r1 + ' \u00b7 R2 ' + ax.r2 + ' \u00b7 angle ' + e.angle + '\u00b0 \u00b7 ' +
       (e.dir === 'UP' ? 'Up' : 'Down') + (r.flip ? ' (FLIP)' : '') + (e.zAuto ? ' \u00b7 fingers automatic' : '') + '</div>' +
       '<div>' + A.fingers.map(line).join('<br>') + '</div>' +
-      A.warns.concat(['r1', 'r2'].filter(function (k) { return ax[k] < 0 && r.xFinal < 30; }).map(function (k) { return k.toUpperCase() + ' is below the die top: the finger would hit the die.'; })).map(function (w) { return '<div class="bad">' + esc(w) + '</div>'; }).join('');
+      A.warns.concat(['r1', 'r2'].filter(function (k) { return ax[k] < 0 && r.xFinal < Sim3D.DIE_BACK; }).map(function (k) { return k.toUpperCase() + ' is below the die top: the finger would hit the die.'; })).map(function (w) { return '<div class="bad">' + esc(w) + '</div>'; }).join('');
+  }
+
+  /* ------------------------------------------------------------------ tooling setup (stations) */
+
+  var planCache = { key: null, plan: null };
+
+  /* Punch section library: [{len, qty, note}], what is on the shelf. Kept in this browser like the other settings. */
+  var punchLib = [];
+
+  function loadLib() {
+    try {
+      var raw = localStorage.getItem('entalbend.punchLib');
+      if (raw) { punchLib = JSON.parse(raw); return; }
+      var old = JSON.parse(localStorage.getItem('entalbend.settings') || '{}').tlPunch;   // earlier text field
+      if (old) punchLib = Tooling.parseStock(old).list.map(function (s) { return { len: s.len, qty: s.qty, note: '' }; });
+    } catch (e) { /* storage not available */ }
+    if (!Array.isArray(punchLib)) punchLib = [];
+  }
+
+  function saveLib() {
+    try { localStorage.setItem('entalbend.punchLib', JSON.stringify(punchLib)); } catch (e) { /* storage not available */ }
+  }
+
+  function sortLib() { punchLib.sort(function (a, b) { return (+b.len || 0) - (+a.len || 0); }); }
+
+  function renderLib() {
+    var body = $('tlLib');
+    if (!punchLib.length) {
+      body.innerHTML = '<tr><td colspan="5" class="empty">No sections yet. Use Add section for each length you have.</td></tr>';
+    } else {
+      body.innerHTML = punchLib.map(function (s, i) {
+        return '<tr data-i="' + i + '"><td><input type="number" data-f="len" min="1" step="1" value="' + (s.len || '') + '"></td>' +
+          '<td><input type="number" data-f="qty" min="0" step="1" value="' + (s.qty === undefined ? '' : s.qty) + '"></td>' +
+          '<td><input data-f="note" maxlength="40" placeholder="e.g. horn left" value="' + esc(s.note || '') + '"></td>' +
+          '<td class="used" data-used></td>' +
+          '<td class="acts"><button class="mini" type="button" data-act="del" title="Remove">✕</button></td></tr>';
+      }).join('');
+    }
+    libSummary();
+    libUsage();
+  }
+
+  function libSummary() {
+    var n = 0, mm = 0;
+    punchLib.forEach(function (s) { var q = Math.max(0, Math.floor(+s.qty || 0)); n += q; mm += q * (+s.len || 0); });
+    $('tlLibSum').textContent = n ? n + ' piece' + (n === 1 ? '' : 's') + ', ' + Math.round(mm) + ' mm in all' : '';
+  }
+
+  /* "In use" column: pieces of each length that the current station plan takes. */
+  function libUsage() {
+    var used = {}, p = state.plan;
+    if (p) p.stations.forEach(function (st) { st.punch.forEach(function (L) { used[L] = (used[L] || 0) + 1; }); });
+    var left = {};
+    Object.keys(used).forEach(function (k) { left[k] = used[k]; });
+    Array.prototype.forEach.call($('tlLib').querySelectorAll('tr[data-i]'), function (tr) {
+      var s = punchLib[+tr.dataset.i], L = Math.round(+s.len || 0), cell = tr.querySelector('[data-used]');
+      var u = Math.min(left[L] || 0, Math.max(0, Math.floor(+s.qty || 0)));
+      left[L] = (left[L] || 0) - u;
+      cell.textContent = p ? u + ' of ' + Math.max(0, Math.floor(+s.qty || 0)) : '';
+    });
+  }
+
+  /* The station plan for these rows (cached), or null. force: plan even when stations are not in use. */
+  function toolPlan(rows, force) {
+    if (!state.model || !rows.length || !window.Tooling || !window.THREE) return null;
+    if (!force && !$('tlUse').checked) return null;
+    var segs = outlineSegs(), bends = simBends(rows);
+    var inp = {
+      key: meshKey(bends, segs), segs: segs, bends: bends, thickness: parseFloat($('thickness').value) || 1, dieV: dieV(),
+      flipPunch: $('simFlip').checked, punchStock: punchLib, die: { len: parseFloat($('tlDieLen').value) || 0, centre: parseFloat($('tlDieC').value) || 0 },
+      clear: parseFloat($('tlClear').value) || 0, short: parseFloat($('tlShort').value) || 0, gap: parseFloat($('tlGap').value) || 0,
+      moves: state.stationMoves
+    };
+    var key = JSON.stringify([inp.key, bends.map(function (b) { return [b.angle, b.dir, b.sign]; }), inp.thickness, inp.dieV, inp.flipPunch,
+      inp.punchStock.map(function (s) { return [s.len, s.qty]; }), inp.die, inp.clear, inp.short, inp.gap, inp.moves]);
+    if (planCache.key !== key) {
+      try { planCache = { key: key, plan: Tooling.plan(inp) }; }
+      catch (err) { planCache = { key: key, plan: null }; setStatus('Tooling plan failed: ' + err.message, true); }
+    }
+    return planCache.plan;
+  }
+
+  function planShift(r) {
+    var b = state.plan && state.plan.bends[r.n - 1];
+    return b ? b.shift : 0;
+  }
+
+  /* Where the middle of this bend sits along the machine: its station plus Part shift. */
+  function rowShift(r) { return (parseFloat($('simShift').value) || 0) + planShift(r); }
+
+  /* Fingers set by hand keep their place on the part: when the part moves (another station, a station moved,
+     Part shift) Z1 and Z2 move with it. zAt is where the part was when the fingers were set. */
+  function followShift(rows) {
+    rows.forEach(function (r) {
+      var e = r.e, now = rowShift(r);
+      if (e.zAuto) { e.zAt = now; return; }
+      if (!isFinite(e.zAt)) { e.zAt = now; return; }
+      var dz = now - e.zAt;
+      if (Math.abs(dz) < 0.01) return;
+      var ax = axisValues(e);
+      e.z1 = r2(ax.z1 - dz); e.z2 = r2(ax.z2 + dz);       // Z1 is measured to the left, Z2 to the right
+      e.zAt = now;
+    });
+  }
+
+  function seqShift(i) {
+    var r = computeRows().filter(function (q) { return q.n === i + 1; })[0];
+    return r ? rowShift(r) : 0;
+  }
+
+  function refreshPlan(rows) {
+    state.plan = toolPlan(rows);
+    renderPlan();
+    libUsage();
+  }
+
+  function renderPlan() {
+    var box = $('tlPlan'), p = state.plan;
+    if (!p) {
+      box.innerHTML = state.seq.length ? '<span class="muted">Tick "Use stations in the simulator" to plan the stations, or make the PDF.</span>' : '';
+      return;
+    }
+    var moved = p.stations.some(function (st) { return st.move; });
+    box.innerHTML = '<div class="tableWrap"><table class="plain stnTable"><thead><tr><th>Station</th><th>Punch sections, left to right</th>' +
+      '<th>Position from centre</th><th title="Move the station from where the plan puts it. + = right, - = left. Shift+click the arrows for 1 mm.">Move (mm)</th><th>Bends</th></tr></thead><tbody>' +
+      p.stations.map(function (st) {
+        return '<tr data-stn="' + st.name + '"><td><b>' + st.name + '</b></td><td>' + (st.punch.length ? st.punch.join(' + ') + ' = ' + st.len : '<span class="bad">missing ' + st.len + '</span>') + '</td>' +
+          '<td>' + st.u0 + ' to ' + st.u1 + ' mm</td>' +
+          '<td class="move"><button class="mini" type="button" data-nudge="-10" title="Left 10 mm">\u25C0</button>' +
+          '<input type="number" step="5" data-move value="' + st.move + '">' +
+          '<button class="mini" type="button" data-nudge="10" title="Right 10 mm">\u25B6</button></td>' +
+          '<td>' + st.bends.map(function (k) { return k + 1; }).join(', ') + '</td></tr>';
+      }).join('') + '</tbody></table></div>' +
+      (moved ? '<div class="tools"><button class="mini" type="button" id="tlResetMoves">Back to planned positions</button></div>' : '') +
+      '<p class="muted small">Die: one piece, ' + p.die.len + ' mm, from ' + (p.die.centre - p.die.len / 2) + ' to ' + (p.die.centre + p.die.len / 2) + ' mm.</p>' +
+      p.warns.map(function (w) { return '<div class="bad">' + esc(w) + '</div>'; }).join('');
+  }
+
+  function toolingPdf() {
+    var rows = computeRows();
+    if (!rows.length) { setStatus('Select the bends first.', true); return; }
+    if (!$('tlUse').checked) { $('tlUse').checked = true; saveSettings(); }
+    renderTable();                                   // places the part at its stations and moves automatic fingers
+    rows = computeRows();
+    var plan = state.plan;
+    if (!plan) { setStatus('Could not plan the tooling.', true); return; }
+    var segs = outlineSegs(), pics = [], wrap = $('sim3dWrap'), W = 960, H = 576, picErr = '';
+    if ($('tlPics').checked) {
+      try {
+        var span = partBox().span;
+        var add = function (d, cx, dist, caption) {
+          d.bg = '#f4f5f6'; d.hideBeam = true;            // the upper beam would hide the punch
+          var url = Sim3D.snapshot(d, wrap, W, H, { target: [cx, 20, 0], from: [cx - dist * 0.3, dist * 0.75, dist * 0.9] });
+          if (url) pics.push({ caption: caption, bytes: PDF.dataUrlBytes(url), w: W, h: H });
+        };
+        add(sim3dData(rows, 0, 0, segs), 0, 1500, 'Overview: all stations, part at bend 1');
+        rows.forEach(function (r, i) {
+          var d = sim3dData(rows, i, 1, segs), pb = plan.bends[i];
+          add(d, d.shift, Math.min(1600, Math.max(500, span, pb.toolLen) * 1.25), 'Bend ' + r.n + ' \u00b7 station ' + pb.stationName + ' \u00b7 ' +
+            r.e.angle + '\u00b0 ' + (r.e.dir === 'UP' ? 'up' : 'down') + (r.flip ? ' (FLIP)' : '') + ' \u00b7 X ' + f2(r.xFinal) + ' \u00b7 Z1 ' + d.z1 + ' / Z2 ' + d.z2);
+        });
+      } catch (err) { pics = []; picErr = ' 3D pictures left out: ' + err.message; }
+      drawSim();
+    }
+    var info = {
+      program: $('progNo').value.trim(), job: $('job').value.trim(), material: $('material').value.trim(),
+      thickness: parseFloat($('thickness').value) || 0, punch: $('punch').value.trim(), die: $('die').value.trim(),
+      source: state.fileName, date: new Date().toLocaleDateString(),
+      rows: rows.map(function (r) {
+        var ax = axisValues(r.e);
+        return { n: r.n, angle: r.e.angle, dir: r.e.dir, flip: r.flip, len: r.b.len, x: r.xFinal, z1: ax.z1, z2: ax.z2, r1: ax.r1, r2: ax.r2 };
+      })
+    };
+    var bytes = Tooling.pdf(plan, info, pics);
+    var name = programName().replace(/[\\/:*?"<>|]+/g, '_') + ' tooling.pdf';
+    download(name, new Blob([bytes], { type: 'application/pdf' }), 'application/pdf');
+    setStatus('Tooling setup saved as ' + name + ' (' + plan.stations.length + ' station' + (plan.stations.length === 1 ? '' : 's') + ').' +
+      (plan.warns.length ? ' ' + plan.warns.length + ' warning(s), see the PDF.' : '') + picErr, plan.warns.length > 0 || !!picErr);
   }
 
   /* ------------------------------------------------------------------ USB export (Operateur 2000) */
@@ -790,8 +990,9 @@
         forced: Array.from(state.forced.entries())
       },
       fields: fields,
-      seq: state.seq.map(function (e) { return { id: e.id, angle: e.angle, dir: e.dir, sign: e.sign, offset: e.offset, z1: axisVal(e.z1), z2: axisVal(e.z2), r1: axisVal(e.r1), r2: axisVal(e.r2), set: cleanSet(e.set) }; }),
-      output: state.outputEdited ? { format: $('outFormat').value, text: $('outText').value } : null
+      seq: state.seq.map(function (e) { return { id: e.id, angle: e.angle, dir: e.dir, sign: e.sign, offset: e.offset, z1: axisVal(e.z1), z2: axisVal(e.z2), r1: axisVal(e.r1), r2: axisVal(e.r2), zAuto: !!e.zAuto, zAt: isFinite(e.zAt) ? e.zAt : null, set: cleanSet(e.set) }; }),
+      output: state.outputEdited ? { format: $('outFormat').value, text: $('outText').value } : null,
+      tooling: { moves: state.stationMoves }
     };
   }
 
@@ -806,6 +1007,7 @@
     PROGRAM_FIELDS.forEach(function (id) { if (p.fields && p.fields[id] !== undefined) $(id).value = p.fields[id]; });
     saveSettings();
     state.seq = [];
+    state.stationMoves = (p.tooling && p.tooling.moves) || {};
     var ok = loadText(p.dxf, p.fileName || 'program.dxf',
       { forced: d.forced || [], bendLayers: d.bendLayers || [], ignoreLayers: d.ignoreLayers || [] });
     if (!ok) return;
@@ -813,7 +1015,8 @@
     var ids = new Set(state.model.bends.map(function (b) { return b.id; }));
     var saved = Array.isArray(p.seq) ? p.seq : [];
     state.seq = saved.filter(function (e) { return ids.has(e.id); }).map(function (e) {
-      return { id: e.id, angle: +e.angle || 0, dir: e.dir === 'DOWN' ? 'DOWN' : 'UP', sign: e.sign === -1 ? -1 : 1, offset: +e.offset || 0, z1: axisVal(e.z1), z2: axisVal(e.z2), r1: axisVal(e.r1), r2: axisVal(e.r2), zAuto: false, set: cleanSet(e.set) };
+      return { id: e.id, angle: +e.angle || 0, dir: e.dir === 'DOWN' ? 'DOWN' : 'UP', sign: e.sign === -1 ? -1 : 1, offset: +e.offset || 0, z1: axisVal(e.z1), z2: axisVal(e.z2), r1: axisVal(e.r1), r2: axisVal(e.r2), zAuto: !!e.zAuto,
+        zAt: isFinite(e.zAt) && e.zAt !== null ? +e.zAt : parseFloat($('simShift').value) || 0, set: cleanSet(e.set) };
     });
     state.currentName = p.name || '';
     $('progName').value = state.currentName;
@@ -912,6 +1115,7 @@
       var o = {};
       SETTINGS_IDS.forEach(function (id) { o[id] = $(id).value; });
       o.useLinetype = $('useLinetype').checked;
+      SETTINGS_CHECKS.forEach(function (id) { o[id] = $(id).checked; });
       o.gap = $('gap').value; o.minLen = $('minLen').value; o.scale = $('scale').value;
       localStorage.setItem('entalbend.settings', JSON.stringify(o));
     } catch (e) { /* storage not available */ }
@@ -924,6 +1128,7 @@
       var o = JSON.parse(raw);
       SETTINGS_IDS.forEach(function (id) { if (o[id] !== undefined && $(id)) $(id).value = o[id]; });
       if (o.useLinetype !== undefined) $('useLinetype').checked = !!o.useLinetype;
+      SETTINGS_CHECKS.forEach(function (id) { if (o[id] !== undefined) $(id).checked = !!o[id]; });
       ['gap', 'minLen', 'scale'].forEach(function (id) { if (o[id] !== undefined) $(id).value = o[id]; });
     } catch (e) { /* ignore */ }
   }
@@ -939,6 +1144,7 @@
 
   function init() {
     loadSettings();
+    loadLib(); sortLib(); renderLib();
     readDetection();
     bindCanvas();
 
@@ -989,7 +1195,7 @@
       else if (t.dataset.f === 'offset') e.offset = parseFloat(t.value) || 0;
       else if (AXES.indexOf(t.dataset.f) >= 0) {
         e[t.dataset.f] = t.value === '' || !isFinite(parseFloat(t.value)) ? null : parseFloat(t.value);
-        if (t.dataset.f[0] === 'z') e.zAuto = false;
+        if (t.dataset.f[0] === 'z') { e.zAuto = false; e.zAt = seqShift(+tr.dataset.i); }
       }
       else return;
       updateDerived();
@@ -999,6 +1205,11 @@
       if (tr && (t.dataset.f === 'z1' || t.dataset.f === 'z2')) {
         var ez = state.seq[+tr.dataset.i];
         if (ez && enforceZ(ez, t.dataset.f)) { setStatus('Z1 + Z2 must be at least ' + Sim.MIN_Z_SUM + ' mm, so the other finger was moved.'); renderTable(); return; }
+      }
+      if (tr && t.dataset.f === 'zAuto') {
+        var ea = state.seq[+tr.dataset.i];
+        if (ea) { ea.zAuto = t.checked; ea.zAt = seqShift(+tr.dataset.i); renderTable(); }
+        return;
       }
       if (!tr || t.dataset.f !== 'dir') return;
       var e = state.seq[+tr.dataset.i];
@@ -1037,7 +1248,7 @@
       var u = Sim.uAt(simTop, ev.offsetX), lim = Sim.MACHINE_W / 2 - Sim.FINGER_W / 2;
       var z = Math.round(dr.name === 'Z1' ? -u : u);
       z = Math.max(-lim, Math.min(lim, ev.shiftKey ? Math.round((dr.name === 'Z1' ? -u : u) * 10) / 10 : z));
-      e[dr.name === 'Z1' ? 'z1' : 'z2'] = z; e.zAuto = false;
+      e[dr.name === 'Z1' ? 'z1' : 'z2'] = z; e.zAuto = false; e.zAt = seqShift(dr.row);
       enforceZ(e, dr.name === 'Z1' ? 'z1' : 'z2');
       ['z1', 'z2'].forEach(function (k) {
         var cell = $('seqBody').querySelector('tr[data-i="' + dr.row + '"] input[data-f="' + k + '"]');
@@ -1084,6 +1295,48 @@
       });
     });
     ['simZoom', 'simFlip', 'simShift', 'usbZ', 'usbR', 'thickness', 'die', 'punch', 'gaugeMin'].forEach(function (id) { $(id).addEventListener('input', function () { renderTable(); }); });
+    ['tlDieLen', 'tlDieC', 'tlClear', 'tlShort', 'tlGap', 'tlUse'].forEach(function (id) { $(id).addEventListener('change', function () { saveSettings(); renderTable(); }); });
+    $('tlLib').addEventListener('input', function (ev) {
+      var t = ev.target, tr = t.closest('tr[data-i]');
+      if (!tr || !t.dataset.f) return;
+      var s = punchLib[+tr.dataset.i];
+      s[t.dataset.f] = t.dataset.f === 'note' ? t.value : (t.value === '' ? '' : parseFloat(t.value));
+      saveLib(); libSummary();
+    });
+    $('tlLib').addEventListener('change', function (ev) {
+      if (!ev.target.dataset.f || ev.target.dataset.f === 'note') return;
+      renderTable();
+    });
+    $('tlLib').addEventListener('click', function (ev) {
+      var btn = ev.target.closest('button[data-act="del"]');
+      if (!btn) return;
+      punchLib.splice(+btn.closest('tr').dataset.i, 1);
+      saveLib(); renderLib(); renderTable();
+    });
+    $('tlAdd').addEventListener('click', function () {
+      punchLib.push({ len: '', qty: 1, note: '' });
+      saveLib(); renderLib();
+      var inp = $('tlLib').querySelector('tr[data-i="' + (punchLib.length - 1) + '"] input[data-f="len"]');
+      if (inp) inp.focus();
+    });
+    $('tlPics').addEventListener('change', saveSettings);
+    var moveStation = function (name, v) {
+      state.stationMoves = Object.assign({}, state.stationMoves);
+      if (v) state.stationMoves[name] = Math.round(v); else delete state.stationMoves[name];
+      renderTable();
+    };
+    $('tlPlan').addEventListener('change', function (ev) {
+      var tr = ev.target.closest('tr[data-stn]');
+      if (tr && ev.target.hasAttribute('data-move')) moveStation(tr.dataset.stn, parseFloat(ev.target.value) || 0);
+    });
+    $('tlPlan').addEventListener('click', function (ev) {
+      if (ev.target.id === 'tlResetMoves') { state.stationMoves = {}; renderTable(); return; }
+      var btn = ev.target.closest('button[data-nudge]');
+      if (!btn) return;
+      var tr = btn.closest('tr[data-stn]'), cur = +state.stationMoves[tr.dataset.stn] || 0;
+      moveStation(tr.dataset.stn, cur + (+btn.dataset.nudge) / (ev.shiftKey ? 10 : 1));
+    });
+    $('tlPdf').addEventListener('click', toolingPdf);
     $('clearSeq').addEventListener('click', function () { state.seq = []; renderTable(); });
 
     SETTINGS_IDS.forEach(function (id) {
@@ -1132,7 +1385,7 @@
 
   window.EntalBend = {
     loadText: loadText, state: state, computeRows: computeRows, formatProgram: formatProgram, toggleBend: toggleBend,
-    snapshot: snapshot, applyProgram: applyProgram, usbPrepare: usbPrepare
+    snapshot: snapshot, applyProgram: applyProgram, usbPrepare: usbPrepare, toolPlan: toolPlan, toolingPdf: toolingPdf
   };
   init();
 })();
