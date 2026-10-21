@@ -1,0 +1,3 @@
+# Local only: copies of the machine disks and copyrighted manuals/drawings
+Floppy*/
+*.pdf
