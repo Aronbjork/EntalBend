@@ -242,6 +242,14 @@ td.notes { white-space: normal; min-width: 220px; }
 .secTable input[type=number] { width: 90px; }
 .secTable td.used { font-variant-numeric: tabular-nums; color: var(--ink-2); }
 #tlPlan { margin-top: 10px; }
+.bends .rowHead .toolbar { margin-bottom: 0; }
+.suggest:empty { display: none; }
+.suggest { margin-top: 12px; display: grid; gap: 6px; }
+.suggest .sug { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 8px 12px; border: 1px solid var(--border); border-radius: var(--radius-s); background: var(--surface-2); font-size: 13px; }
+.suggest .sug.cur { border-color: var(--brand); background: var(--brand-tint); }
+.suggest .ord { font-weight: 600; font-variant-numeric: tabular-nums; }
+.suggest .bad { color: var(--crit); }
+.suggest .head { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
 #tlPlan .tools { margin-top: 8px; }
 .stnTable td.move { display: flex; gap: 4px; align-items: center; }
 .stnTable td.move input { width: 70px; padding: 3px 6px; font-size: 13px; text-align: right; }

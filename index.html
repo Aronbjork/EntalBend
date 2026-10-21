@@ -24,8 +24,8 @@
     </div>
     <div class="top-actions">
       <span id="fileName" class="muted">No file loaded</span>
-      <label class="btn primary">Open DXF
-        <input type="file" id="fileInput" accept=".dxf,.DXF" hidden>
+      <label class="btn primary" title="A flat pattern as DXF, or the folded part as STEP (it is unfolded with the K-factor)">Open DXF / STEP
+        <input type="file" id="fileInput" accept=".dxf,.DXF,.step,.stp,.STEP,.STP" hidden>
       </label>
       <button type="button" class="icon-btn" id="themeBtn" title="Light/dark mode" aria-label="Toggle theme">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
@@ -40,8 +40,8 @@
     <div class="canvasWrap" id="dropZone">
       <canvas id="cv"></canvas>
       <div class="hint" id="hint">
-        <strong>Drop an ASCII .dxf file here</strong>
-        <span>or use Open DXF. Bend lines must be dashed (or on a layer you mark as bend).</span>
+        <strong>Drop an ASCII .dxf or a .step file here</strong>
+        <span>or use Open DXF / STEP. In a DXF, bend lines must be dashed (or on a layer you mark as bend). A STEP of the folded part is unfolded for you.</span>
       </div>
       <div class="viewTools"><button class="mini" id="fitBtn" type="button">Fit to view</button></div>
       <div class="legend">
@@ -83,6 +83,7 @@
         <label>Material<input id="material" list="matList" value="Steel"></label>
         <datalist id="matList"><option value="Steel"><option value="Stainless steel"><option value="Aluminium"></datalist>
         <label>Thickness (mm)<input id="thickness" type="number" step="0.1" min="0" value="2"></label>
+        <label title="Used to unfold STEP files: bend allowance = angle x (inside radius + K x thickness). Use the same K-factor as in SolidWorks (its default is 0.5).">K-factor (STEP)<input id="kFactor" type="number" step="0.01" min="0" max="1" value="0.5"></label>
         <label>Punch<input id="punch" placeholder="tool reference"></label>
         <label>Die<input id="die" placeholder="tool reference"></label>
         <label>Default angle (°)<input id="defAngle" type="number" step="0.1" min="0" max="180" value="90"></label>
@@ -132,8 +133,13 @@
 <section class="panel bends">
   <div class="rowHead">
     <h2>Bend sequence</h2>
-    <button class="mini" id="clearSeq" type="button">Clear selection</button>
+    <div class="toolbar">
+      <button class="mini" id="btnSuggest" type="button" title="Try bend orders with the collision checks and show the best ones">Suggest bend order</button>
+      <button class="mini" id="btnFlatDxf" type="button" hidden title="Save the flat pattern made from the STEP file as a DXF">Save flat DXF</button>
+      <button class="mini" id="clearSeq" type="button">Clear selection</button>
+    </div>
   </div>
+  <div id="seqSuggest" class="suggest"></div>
   <div class="tableWrap">
     <table class="seq">
       <thead>
@@ -264,6 +270,8 @@
 <script src="sim3d.js"></script>
 <script src="pdf.js"></script>
 <script src="tooling.js"></script>
+<script src="step.js"></script>
+<script src="sequence.js"></script>
 <script src="app.js"></script>
 <script src="usbedit.js"></script>
 </body>

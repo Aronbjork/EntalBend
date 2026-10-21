@@ -268,23 +268,63 @@
 
   /* Points spread over the part (about every `spacing` mm) for one step, for collision checks.
      Returns P (x, y, z on the machine, x = 0 at the bend centre unless shifted) and Q (flat-pattern x, y). */
+  /* Where the sample points sit on the flat pattern: a square grid (spacing s) plus points along the outline, each
+     stored as its triangle and the weights of the triangle's corners. Made once per part and spacing. */
+  var spotCache = { key: null, s: 0, spots: null };
+  function spots(s) {
+    if (spotCache.key === meshKey && spotCache.s === s) return spotCache.spots;
+    var out = { tri: [], w: [], Q: [] }, edgeUse = {};
+    var ek = function (p, q) {
+      var a = Math.round(p[0] * 100) + ',' + Math.round(p[1] * 100), b = Math.round(q[0] * 100) + ',' + Math.round(q[1] * 100);
+      return a < b ? a + '|' + b : b + '|' + a;
+    };
+    tris.forEach(function (t) { for (var e = 0; e < 3; e++) { var k = ek(t.v[e], t.v[(e + 1) % 3]); edgeUse[k] = (edgeUse[k] || 0) + 1; } });
+    var add = function (i, wa, wb, wc) {
+      var v = tris[i].v;
+      out.tri.push(i); out.w.push(wa, wb, wc);
+      out.Q.push(v[0][0] * wa + v[1][0] * wb + v[2][0] * wc, v[0][1] * wa + v[1][1] * wb + v[2][1] * wc);
+    };
+    tris.forEach(function (t, i) {
+      var a = t.v[0], b = t.v[1], c = t.v[2];
+      var det = (b[1] - c[1]) * (a[0] - c[0]) + (c[0] - b[0]) * (a[1] - c[1]);
+      if (Math.abs(det) < 1e-9) return;
+      var x0 = Math.min(a[0], b[0], c[0]), x1 = Math.max(a[0], b[0], c[0]), y0 = Math.min(a[1], b[1], c[1]), y1 = Math.max(a[1], b[1], c[1]);
+      for (var gx = Math.ceil(x0 / s) * s; gx <= x1; gx += s) {
+        for (var gy = Math.ceil(y0 / s) * s; gy <= y1; gy += s) {
+          var l1 = ((b[1] - c[1]) * (gx - c[0]) + (c[0] - b[0]) * (gy - c[1])) / det;
+          var l2 = ((c[1] - a[1]) * (gx - c[0]) + (a[0] - c[0]) * (gy - c[1])) / det, l3 = 1 - l1 - l2;
+          if (l1 >= -1e-9 && l2 >= -1e-9 && l3 >= -1e-9) add(i, l1, l2, l3);
+        }
+      }
+      for (var e = 0; e < 3; e++) {                  // outline (edges used by one triangle only)
+        var p = t.v[e], q = t.v[(e + 1) % 3];
+        if (edgeUse[ek(p, q)] !== 1) continue;
+        var n = Math.max(1, Math.ceil(Math.hypot(q[0] - p[0], q[1] - p[1]) / s));
+        for (var k = 0; k < n; k++) {
+          var w = [0, 0, 0];
+          w[e] = 1 - k / n; w[(e + 1) % 3] = k / n;
+          add(i, w[0], w[1], w[2]);
+        }
+      }
+    });
+    spotCache = { key: meshKey, s: s, spots: out };
+    return out;
+  }
+
   function sample(d, spacing) {
     if (!window.THREE) return null;
     var po = pose(d);
     if (!po.F.frame) return null;
-    var P = [], Q = [], s = spacing || 4;
-    po.F.T.forEach(function (t, i) {
-      var a = po.mapP(t.p[0]), b = po.mapP(t.p[1]), c = po.mapP(t.p[2]), f = tris[i].v;
-      var n = Math.max(1, Math.ceil(Math.max(a.distanceTo(b), b.distanceTo(c), c.distanceTo(a)) / s));
-      for (var k = 0; k <= n; k++) {
-        for (var j = 0; j <= n - k; j++) {
-          var wa = k / n, wb = j / n, wc = 1 - wa - wb;
-          P.push(a.x * wa + b.x * wb + c.x * wc, a.y * wa + b.y * wb + c.y * wc, a.z * wa + b.z * wb + c.z * wc);
-          Q.push(f[0][0] * wa + f[1][0] * wb + f[2][0] * wc, f[0][1] * wa + f[1][1] * wb + f[2][1] * wc);
-        }
-      }
-    });
-    return { P: P, Q: Q, tip: po.tip, dieTop: po.dieTop, th: po.th };
+    var sp = spots(spacing || 4), n = sp.tri.length, P = new Float64Array(n * 3), mapped = {};
+    for (var j = 0; j < n; j++) {
+      var i = sp.tri[j], v = mapped[i];
+      if (!v) { var t = po.F.T[i].p; v = mapped[i] = [po.mapP(t[0]), po.mapP(t[1]), po.mapP(t[2])]; }
+      var wa = sp.w[3 * j], wb = sp.w[3 * j + 1], wc = sp.w[3 * j + 2];
+      P[3 * j] = v[0].x * wa + v[1].x * wb + v[2].x * wc;
+      P[3 * j + 1] = v[0].y * wa + v[1].y * wb + v[2].y * wc;
+      P[3 * j + 2] = v[0].z * wa + v[1].z * wb + v[2].z * wc;
+    }
+    return { P: P, Q: sp.Q, tip: po.tip, dieTop: po.dieTop, th: po.th };
   }
 
   /* d: { key, segs, bends:[{id,p1,p2,len,angle,dir,sign}], step, progress, shift, x, z1, z2, r1, r2,

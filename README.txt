@@ -14,6 +14,8 @@ and open http://localhost:8000
 Files
 -----
 index.html   the page
+step.js      STEP import and unfolding
+sequence.js  bend order suggestions
 style.css    layout and colours
 dxf.js       DXF reading and bend geometry
 app.js       drawing view, bend table, output and USB export
@@ -43,6 +45,30 @@ How to use
    X = 15 for the first and X = 30 for the second. The row is marked "2nd bend on the flange of #n" and its Offset field is highlighted (use it for bend allowance).
 7. Fill in program number (max 6 digits), job reference (max 13 characters), material, thickness,
    punch and die. These limits come from the Operator 2000 programming manual.
+
+STEP import (folded part)
+-------------------------
+Open DXF / STEP (or drop the file) also takes a .step / .stp of the folded part, for example from SolidWorks.
+- The part is unfolded: thickness and inside radius come from the STEP, the bend allowance is
+  angle x (inside radius + K-factor x thickness). Set "K-factor (STEP)" in the Program panel to the K-factor you use
+  in SolidWorks (SolidWorks' default is 0.5). Changing it unfolds the part again and keeps the bend list.
+- The flat pattern goes through the normal DXF path (outline + dashed bend lines), so the drawing, bend table,
+  simulator, tooling and USB export work as for a DXF. Angle and Up/Down of every bend are filled in from the STEP,
+  thickness is set, and a bend order is suggested and used (see below). "Save flat DXF" saves the flat pattern.
+- Up/Down are as seen from the side the flat pattern is drawn from; the side with the most bends going Up is chosen.
+- Recognised: flat faces and cylindrical bends, holes and cut-outs in the flanges, any bend angle below 180.
+  Not recognised: hems (180), bends exported as free-form surfaces, bends through holes. Such parts give a warning.
+- Saved programs keep the flat pattern, not the STEP. To change the K-factor of a saved program, open the STEP again.
+- The DXF way works as before. File: step.js.
+
+Bend order suggestions
+----------------------
+"Suggest bend order" (Bend sequence panel) works for DXF and STEP parts. It tries orders bend by bend and checks each
+step with the same collision checks as the tooling setup (part hits the punch or die, flange reaches the punch
+holder or hangs below the die, no punch fits between flanges), trying both gauge sides. Fewer flips and fewer turns
+of the part are preferred. The three best orders are listed with their flips, turns and any problems; "Use" puts one
+in the table (and changes the gauge side where the suggestion says so). Reorder with the arrows as before.
+The checks only know the part, punch, die and beam: check that the part can be held and gauged. File: sequence.js.
 
 Saved programs
 --------------

@@ -76,6 +76,32 @@
     return c;
   }
 
+  /* Width of a profile per height band (expanded by margin m), so most points can be ruled out without inPoly. */
+  function bands(poly, m) {
+    var y0 = Infinity, y1 = -Infinity, H = 5;
+    poly.forEach(function (p) { y0 = Math.min(y0, p[1]); y1 = Math.max(y1, p[1]); });
+    var n = Math.max(1, Math.ceil((y1 - y0) / H)), lo = [], hi = [];
+    for (var i = 0; i < n; i++) {
+      var a = y0 + i * H - m, b = y0 + (i + 1) * H + m, l = Infinity, h = -Infinity;
+      for (var j = 0; j < poly.length; j++) {
+        var p = poly[j], q = poly[(j + 1) % poly.length];
+        var ya = Math.max(a, Math.min(p[1], q[1])), yb = Math.min(b, Math.max(p[1], q[1]));
+        if (ya > yb) continue;
+        [ya, yb].forEach(function (y) {
+          var x = q[1] === p[1] ? Math.min(p[0], q[0]) : p[0] + (y - p[1]) / (q[1] - p[1]) * (q[0] - p[0]);
+          var x2 = q[1] === p[1] ? Math.max(p[0], q[0]) : x;
+          l = Math.min(l, x); h = Math.max(h, x2);
+        });
+      }
+      lo.push(l - m); hi.push(h + m);
+    }
+    return { y0: y0, H: H, lo: lo, hi: hi, maybe: function (w, y) {
+      var i = Math.floor((y - y0) / H);
+      if (i < 0) i = 0; else if (i >= n) i = n - 1;
+      return w >= lo[i] && w <= hi[i];
+    } };
+  }
+
   function bbox(poly) {
     var b = [Infinity, Infinity, -Infinity, -Infinity];
     poly.forEach(function (p) { b[0] = Math.min(b[0], p[0]); b[1] = Math.min(b[1], p[1]); b[2] = Math.max(b[2], p[0]); b[3] = Math.max(b[3], p[1]); });
@@ -98,13 +124,25 @@
     };
     var res = { pa: -Infinity, pb: Infinity, da: -Infinity, db: Infinity, pmin: Infinity, pmax: -Infinity,
       hitPunch: false, hitDie: false, tooHigh: false, tooLow: false };
-    PROGRESS.forEach(function (prog) {
-      var s = Sim3D.sample({ key: inp.key, segs: inp.segs, bends: inp.bends, step: k, progress: prog, thickness: th }, SAMPLE);
+    (inp.progress || PROGRESS).forEach(function (prog) {
+      var s = Sim3D.sample({ key: inp.key, segs: inp.segs, bends: inp.bends, step: k, progress: prog, thickness: th }, inp.spacing || SAMPLE);
       if (!s) return;
       var punch = Sim3D.punchProfile(s.tip, inp.flipPunch ? -1 : 1), die = Sim3D.dieProfile(V, s.dieTop);
-      var pb = bbox(punch), db = bbox(die), P = s.P, Q = s.Q;
+      var pb = bbox(punch), db = bbox(die), P = s.P, Q = s.Q, hiY = s.tip + 147, loY = s.dieTop - Sim3D.DIE_H - 2;
+      var pBand = bands(punch, m + 0.1), dBand = bands(die, m + 0.1);
       for (var i = 0, n = P.length / 3; i < n; i++) {
         var x = P[3 * i], y = P[3 * i + 1], w = -P[3 * i + 2];       // w = across the tools, back is +
+        if (w < 60 && w > -60) {                                      // (the bend zone itself is never this high or low)
+          if (y > hiY) res.tooHigh = true;
+          else if (y < loY) res.tooLow = true;
+        }
+        var nearP = w > pb[0] - m && w < pb[2] + m && y > pb[1] - m && y < pb[3] + m;
+        var nearD = w > db[0] - m && w < db[2] + m && y > db[1] - m && y < db[3] + m;
+        if (!nearP && !nearD) continue;
+        if (nearP) res.pmin = Math.min(res.pmin, x), res.pmax = Math.max(res.pmax, x);
+        nearP = nearP && pBand.maybe(w, y);
+        nearD = nearD && dBand.maybe(w, y);
+        if (!nearP && !nearD) continue;
         var fx = Q[2 * i] - b.p1[0], fy = Q[2 * i + 1] - b.p1[1];
         var t = fx * dx + fy * dy;
         if (Math.abs(fy * dx - fx * dy) < band) {
@@ -113,14 +151,6 @@
              not an edge that just lies along it. */
           if (!(flatIn(Q[2 * i] - dy * 1.5, Q[2 * i + 1] + dx * 1.5) && flatIn(Q[2 * i] + dy * 1.5, Q[2 * i + 1] - dx * 1.5))) continue;
         }
-        if (Math.abs(w) < 60) {
-          if (y > s.tip + 147) res.tooHigh = true;
-          if (y < s.dieTop - Sim3D.DIE_H - 2) res.tooLow = true;
-        }
-        var nearP = w > pb[0] - m && w < pb[2] + m && y > pb[1] - m && y < pb[3] + m;
-        var nearD = w > db[0] - m && w < db[2] + m && y > db[1] - m && y < db[3] + m;
-        if (!nearP && !nearD) continue;
-        if (nearP) { res.pmin = Math.min(res.pmin, x); res.pmax = Math.max(res.pmax, x); }
         var inside = Math.abs(x) < half - 1;
         if (nearP && (inPoly(punch, w, y + m) || inPoly(punch, w - m, y) || inPoly(punch, w + m, y))) {
           if (inside) res.hitPunch = true;
@@ -439,5 +469,5 @@
     return doc.bytes();
   }
 
-  window.Tooling = { parseStock: parseStock, compose: compose, plan: plan, pdf: pdf };
+  window.Tooling = { parseStock: parseStock, compose: compose, analyse: analyse, plan: plan, pdf: pdf };
 })();

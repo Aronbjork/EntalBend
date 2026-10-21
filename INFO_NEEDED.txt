@@ -1,0 +1,100 @@
+EntalBend - information needed to improve it
+============================================
+
+Fill in what you can (write after the arrows), add the files to the EntalBend folder, and give this file back.
+Things marked (!) matter most. Anything you are not sure about: write "not sure", that helps too.
+
+
+1. Unfolding (STEP import)
+--------------------------
+(!) 1.1 K-factor used in SolidWorks
+    Where: open the part > Sheet-Metal feature (top of the tree) > Edit Feature > "Bend Allowance".
+    Write the type (K-Factor / Bend Allowance / Bend Deduction / Bend Table) and the value.
+    -> 1 mm sheet:
+    -> 1.5 mm sheet:
+    -> Any other thickness you bend often:
+
+(!) 1.2 Flat pattern DXF of "PS30 Baseplate v222" from SolidWorks
+    How: right-click the part in the tree > Export to DXF/DWG > "Sheet metal", tick "Bend lines".
+    Save it as "PS30 Baseplate v222 flat.dxf" in the EntalBend folder.
+    EntalBend gets 252.40 x 185.32 mm (K 0.5). The overall size SolidWorks shows in the flat pattern:
+    -> width x height:
+
+(!) 1.3 A box part
+    A STEP of a real box (four sides bent up, corner reliefs) and its flat DXF, same way as above.
+    -> file names:
+
+1.4 Was Up/Down right?
+    Open the baseplate STEP in EntalBend. Do the bends that come out as "Up" really go up, as you would bend them?
+    -> yes / no / which ones are wrong:
+
+
+2. Bend order suggestions
+-------------------------
+(!) 2.1 The order you really use for the baseplate (bend numbers as in EntalBend's table, or describe it)
+    -> order:
+
+2.2 For the baseplate EntalBend warns on the last bends ("flange reaches the punch holder", "hits the punch").
+    Is that true on the machine, or does it fit?
+    ->
+
+2.3 What do you prefer when bending (so the suggestions can rank orders like you would)?
+    For example: fewest flips, keep the big flange down, short flanges first, etc.
+    ->
+
+
+3. Tools
+--------
+(!) 3.1 Die (one piece, V8 slot at the back, V12 at the front)
+    -> Length (mm):
+    -> Where it sits on the bed (centred? or from the left end):
+    -> Height (mm) (EntalBend uses 48):
+    -> Width (mm) (EntalBend uses 60):
+    -> Distance from the back edge of the die to the middle of the V8 slot (EntalBend uses 15.75):
+    -> V8 slot: opening angle (e.g. 88 or 30 deg) and shoulder radius if known:
+    -> Die reference / name you type in the Program panel:
+
+(!) 3.2 Punch
+    -> Type / reference (EntalBend draws the AFH 814, 30 deg tip, 150 mm high):
+    -> Do all your sectioned pieces have that shape? If not, which shapes/heights:
+    -> Horn (ear) pieces? Lengths:
+    -> Gooseneck punch available? Reference and drawing/photo if you have one:
+
+3.3 Your punch sections (also typed into the library in EntalBend, but list them here as a backup)
+    -> length x count, ...:
+
+
+4. Machine (Amada HFE 80-25)
+----------------------------
+4.1 Distance between the side frames (how long a part fits between them), mm:
+    ->
+4.2 Free height under the punch holder: how high may a flange stand up above the punch tip before it
+    hits the holder/beam? (EntalBend uses about 147 mm)
+    ->
+4.3 Bed / tool holder length usable for tools (EntalBend uses 2500 mm):
+    ->
+
+
+5. Backgauge fingers
+--------------------
+(!) 5.1 Where is Z measured: to the middle of the finger, or to one edge (which)?
+    ->
+5.2 You said the fingers must stay 10 mm apart, and 60/60 is the closest (Z1 + Z2 >= 120).
+    With 100 mm wide fingers measured to the middle that would be a 20 mm gap. Which is right?
+    ->
+5.3 Finger size (EntalBend uses 100 wide, 258 long arm, 5 mm thick, 45 mm high block), and what R1/R2 measure:
+    ->
+
+
+6. Anything else
+----------------
+Things that annoyed you, were wrong, or that you want next:
+->
+
+
+Files to bring (put them in the EntalBend folder)
+-------------------------------------------------
+[ ] PS30 Baseplate v222 flat.dxf          (1.2)
+[ ] A box part: .STEP and flat .dxf       (1.3)
+[ ] Optional: another part you bend often, .STEP + flat .dxf
+[ ] Optional: photo of the die end and the punch end with a ruler, and of a backgauge finger

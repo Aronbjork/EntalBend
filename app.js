@@ -16,11 +16,12 @@
     seq: [],                       // [{id, angle, dir:'UP'|'DOWN', sign:+1|-1, offset}]
     view: { ox: 0, oy: 0, k: 1 }, viewTouched: false,   // refit on resize until the user zooms or pans
     hover: null, outputEdited: false, simStep: 0, simDrag: null, simProgress: 0, simTab: '3d',
-    plan: null, stationMoves: {}   // stationMoves: { A: mm } stations moved by hand
+    plan: null, stationMoves: {},  // stationMoves: { A: mm } stations moved by hand
+    stepText: null, stepName: '', stepInfo: '', stepMap: {}, suggestions: null   // STEP import: bend id -> bend index in the STEP
   };
 
   var SETTINGS_IDS = ['progNo', 'job', 'material', 'thickness', 'punch', 'die', 'defAngle', 'gaugeMin',
-    'outFormat', 'tlDieLen', 'tlDieC', 'tlClear', 'tlShort', 'tlGap'];
+    'outFormat', 'kFactor', 'tlDieLen', 'tlDieC', 'tlClear', 'tlShort', 'tlGap'];
   var SETTINGS_CHECKS = ['tlUse', 'tlPics'];
 
   /* ------------------------------------------------------------------ status */
@@ -40,7 +41,13 @@
     reader.onload = function () {
       var text = String(reader.result);
       if (/\.(json|entalbend)$/i.test(file.name)) importProgram(text, file.name);
-      else { state.currentName = ''; $('progName').value = ''; state.stationMoves = {}; loadText(text, file.name); renderLibrary(); }
+      else if (/\.(step|stp)$/i.test(file.name)) {
+        if (!confirmReplace()) return;
+        state.currentName = ''; $('progName').value = '';
+        importStep(text, file.name);
+        renderLibrary();
+      }
+      else { state.currentName = ''; $('progName').value = ''; state.stationMoves = {}; clearStep(); loadText(text, file.name); renderLibrary(); }
     };
     reader.onerror = function () { setStatus('Could not read the file.', true); };
     reader.readAsText(file);
@@ -93,7 +100,7 @@
   function updateInfo() {
     var m = state.model;
     if (!m) { $('detectInfo').textContent = ''; return; }
-    var t = m.bends.length + ' bend line(s) · sheet ' + f2(m.sheet.w) + ' × ' + f2(m.sheet.h) + ' mm';
+    var t = (state.stepInfo ? state.stepInfo + ' · ' : '') + m.bends.length + ' bend line(s) · sheet ' + f2(m.sheet.w) + ' × ' + f2(m.sheet.h) + ' mm';
     var un = state.data.unsupported, keys = Object.keys(un);
     if (keys.length) t += ' · not imported: ' + keys.map(function (k) { return un[k] + ' ' + k; }).join(', ');
     $('detectInfo').textContent = t;
@@ -188,6 +195,7 @@
     refreshOutput(false);
     draw();
     renderSettings();
+    renderSuggest();
     drawSim();
   }
 
@@ -688,6 +696,131 @@
       A.warns.concat(['r1', 'r2'].filter(function (k) { return ax[k] < 0 && r.xFinal < Sim3D.DIE_BACK; }).map(function (k) { return k.toUpperCase() + ' is below the die top: the finger would hit the die.'; })).map(function (w) { return '<div class="bad">' + esc(w) + '</div>'; }).join('');
   }
 
+  /* ------------------------------------------------------------------ STEP import */
+
+  /* The folded part is unfolded with the K-factor into a flat DXF, which then goes through the normal DXF path.
+     Angles and Up/Down come from the STEP. keepSeq: unfold again (K-factor changed) and keep the bend list. */
+  function importStep(text, name, keepSeq) {
+    var k = parseFloat($('kFactor').value);
+    if (!(k >= 0 && k <= 1)) k = 0.5;
+    var res;
+    try { res = STEP.unfold(text, { k: k }); }
+    catch (err) { setStatus('Could not read the STEP file: ' + err.message, true); return; }
+    var old = keepSeq ? state.seq.map(function (e) { return { idx: state.stepMap[e.id], e: e }; }) : null;
+    $('thickness').value = res.thickness;
+    if (state.scale !== 1) { $('scale').value = 1; readDetection(); }
+    saveSettings();
+    if (!keepSeq) state.stationMoves = {};
+    state.stepText = text; state.stepName = name;
+    state.stepInfo = 'STEP: ' + res.thickness + ' mm sheet, inside radius ' + res.radii.join(' / ') + ' mm, K ' + k;
+    if (!loadText(STEP.toDxf(res), name, { forced: [], bendLayers: ['BEND'], ignoreLayers: [] })) return;
+    /* which bend line in the drawing is which bend of the STEP */
+    var m = state.model, idOf = {};
+    state.stepMap = {};
+    res.bends.forEach(function (sb, i) {
+      var mx = (sb.p1[0] + sb.p2[0]) / 2, my = (sb.p1[1] + sb.p2[1]) / 2, best = null, bd = 0.5;
+      m.bends.forEach(function (b) {
+        var d = distSeg(mx, my, b.p1[0], b.p1[1], b.p2[0], b.p2[1]);
+        if (d < bd) { bd = d; best = b; }
+      });
+      if (best && !(best.id in state.stepMap)) { state.stepMap[best.id] = i; idOf[i] = best; }
+    });
+    if (old) {
+      state.seq = old.map(function (o) {
+        var b = idOf[o.idx];
+        if (!b) return null;
+        o.e.id = b.id;
+        return o.e;
+      }).filter(Boolean);
+    } else {
+      state.seq = res.bends.map(function (sb, i) {
+        var b = idOf[i];
+        if (!b) return null;
+        return { id: b.id, angle: sb.angle, dir: sb.dir, sign: DXF.defaultSide(b, m.outlinePts), offset: 0, z1: null, z2: null, r1: null, r2: null, zAuto: true, set: {} };
+      }).filter(Boolean);
+    }
+    setSimStep(0);
+    state.suggestions = null;
+    renderTable();
+    updateInfo();
+    $('btnFlatDxf').hidden = false;
+    var lost = res.bends.length - state.seq.length;
+    var msg = 'Unfolded ' + name + ': ' + state.seq.length + ' bend' + (state.seq.length === 1 ? '' : 's') + ', ' + res.thickness + ' mm, K ' + k + '.' +
+      (lost > 0 ? ' ' + lost + ' bend(s) could not be matched to a bend line.' : '') + (res.warns.length ? ' ' + res.warns.join(' ') : '');
+    setStatus(msg, lost > 0 || res.warns.length > 0);
+    if (!keepSeq && state.seq.length > 1) suggestOrder(true, msg);
+  }
+
+  function clearStep() {
+    state.stepText = null; state.stepName = ''; state.stepInfo = ''; state.stepMap = {};
+    state.suggestions = null;
+    $('btnFlatDxf').hidden = true;
+  }
+
+  /* ------------------------------------------------------------------ bend order suggestions */
+
+  /* apply: use the best order straight away (after a STEP import). */
+  function suggestOrder(apply, prefix) {
+    var rows = computeRows();
+    if (rows.length < 2) { setStatus('Select at least two bends first.', true); return; }
+    setStatus((prefix ? prefix + ' ' : '') + 'Working out bend orders...');
+    $('btnSuggest').disabled = true;
+    setTimeout(function () {
+      try {
+        var res = Sequence.suggest({ segs: outlineSegs(), bends: simBends(rows), thickness: parseFloat($('thickness').value) || 1, dieV: dieV(), flipPunch: $('simFlip').checked }, 3);
+        state.suggestions = res.map(function (s) {
+          return {
+            ids: s.order.map(function (i) { return rows[i].e.id; }), flips: s.flips, turns: s.turns, boxed: s.boxed,
+            signs: s.order.map(function (i) { return s.signs[i]; }),
+            turned: s.order.filter(function (i) { return s.signs[i] !== rows[i].e.sign; }).map(function (i) { return rows[i].e.id; }),
+            problems: s.problems.map(function (p) { return { step: p.step, id: rows[p.bend].e.id, notes: p.notes }; })
+          };
+        });
+        if (apply && state.suggestions.length) useSuggestion(0, true);
+        else renderSuggest();
+        var best = state.suggestions[0];
+        setStatus((prefix ? prefix + ' ' : '') + (apply ? 'Bend order set to suggestion 1. ' : '') +
+          (best && best.problems.length ? 'Even the best order has problems, see the suggestions.' : 'Pick another suggestion or reorder with the arrows if you like.'),
+          !!(best && best.problems.length));
+      } catch (err) { setStatus('Could not suggest an order: ' + err.message, true); }
+      $('btnSuggest').disabled = false;
+    }, 30);
+  }
+
+  function useSuggestion(i, quiet) {
+    var s = state.suggestions && state.suggestions[i];
+    if (!s) return;
+    var byId = {};
+    state.seq.forEach(function (e) { byId[e.id] = e; });
+    if (!s.ids.every(function (id) { return byId[id]; })) { state.suggestions = null; renderSuggest(); return; }
+    state.seq = s.ids.map(function (id, k) {
+      var e = byId[id];
+      if (s.signs[k] && s.signs[k] !== e.sign) { e.sign = s.signs[k]; e.zAuto = true; }   // gauged on the other side
+      return e;
+    });
+    setSimStep(0);
+    renderTable();
+    if (!quiet) setStatus('Bend order set to suggestion ' + (i + 1) + '. You can still reorder with the arrows.');
+  }
+
+  function renderSuggest() {
+    var box = $('seqSuggest'), list = state.suggestions;
+    var cur = state.seq.map(function (e) { return e.id + e.sign; }).join(',');
+    if (!list || !list.length || list[0].ids.length !== state.seq.length ||
+        !list[0].ids.every(function (id) { return state.seq.some(function (e) { return e.id === id; }); })) { box.innerHTML = ''; return; }
+    box.innerHTML = '<div class="head"><span class="muted small">Suggested bend orders (bend names as in the table). Using one reorders the table; the arrows still work.</span>' +
+      '<button class="mini" type="button" data-sug="close">Hide</button></div>' +
+      list.map(function (s, i) {
+        var isCur = s.ids.map(function (id, k) { return id + s.signs[k]; }).join(',') === cur;
+        return '<div class="sug' + (isCur ? ' cur' : '') + '"><b>' + (i + 1) + '.</b><span class="ord">' + s.ids.map(esc).join(' \u2192 ') + '</span>' +
+          '<span class="muted">' + s.flips + ' flip' + (s.flips === 1 ? '' : 's') + ', ' + s.turns + ' turn' + (s.turns === 1 ? '' : 's') +
+          (s.boxed ? ', ' + s.boxed + ' between flanges' : '') + '</span>' +
+          (s.turned.length ? '<span class="muted">gauge on the other side: ' + s.turned.map(esc).join(', ') + '</span>' : '') +
+          (s.problems.length ? '<span class="bad">' + s.problems.map(function (p) { return esc(p.id) + ': ' + esc(p.notes.join(', ')); }).join('; ') + '</span>' : '<span class="muted">no collisions found</span>') +
+          (isCur ? '<span class="tag stn">in use</span>' : '<button class="mini" type="button" data-sug="' + i + '">Use</button>') + '</div>';
+      }).join('');
+  }
+
   /* ------------------------------------------------------------------ tooling setup (stations) */
 
   var planCache = { key: null, plan: null };
@@ -992,6 +1125,7 @@
       fields: fields,
       seq: state.seq.map(function (e) { return { id: e.id, angle: e.angle, dir: e.dir, sign: e.sign, offset: e.offset, z1: axisVal(e.z1), z2: axisVal(e.z2), r1: axisVal(e.r1), r2: axisVal(e.r2), zAuto: !!e.zAuto, zAt: isFinite(e.zAt) ? e.zAt : null, set: cleanSet(e.set) }; }),
       output: state.outputEdited ? { format: $('outFormat').value, text: $('outText').value } : null,
+      step: state.stepInfo ? { name: state.stepName, info: state.stepInfo } : null,
       tooling: { moves: state.stationMoves }
     };
   }
@@ -1008,6 +1142,8 @@
     saveSettings();
     state.seq = [];
     state.stationMoves = (p.tooling && p.tooling.moves) || {};
+    clearStep();
+    if (p.step) { state.stepInfo = p.step.info || ''; state.stepName = p.step.name || ''; $('btnFlatDxf').hidden = false; }
     var ok = loadText(p.dxf, p.fileName || 'program.dxf',
       { forced: d.forced || [], bendLayers: d.bendLayers || [], ignoreLayers: d.ignoreLayers || [] });
     if (!ok) return;
@@ -1338,6 +1474,20 @@
     });
     $('tlPdf').addEventListener('click', toolingPdf);
     $('clearSeq').addEventListener('click', function () { state.seq = []; renderTable(); });
+    $('btnSuggest').addEventListener('click', function () { suggestOrder(false); });
+    $('seqSuggest').addEventListener('click', function (ev) {
+      var b = ev.target.closest('button[data-sug]');
+      if (!b) return;
+      if (b.dataset.sug === 'close') { state.suggestions = null; renderSuggest(); }
+      else useSuggestion(+b.dataset.sug);
+    });
+    $('btnFlatDxf').addEventListener('click', function () {
+      if (state.dxfText) download(baseName() + ' flat.dxf', state.dxfText, 'application/dxf');
+    });
+    $('kFactor').addEventListener('change', function () {
+      saveSettings();
+      if (state.stepText) importStep(state.stepText, state.stepName, true);
+    });
 
     SETTINGS_IDS.forEach(function (id) {
       $(id).addEventListener('change', saveSettings);
@@ -1385,7 +1535,8 @@
 
   window.EntalBend = {
     loadText: loadText, state: state, computeRows: computeRows, formatProgram: formatProgram, toggleBend: toggleBend,
-    snapshot: snapshot, applyProgram: applyProgram, usbPrepare: usbPrepare, toolPlan: toolPlan, toolingPdf: toolingPdf
+    snapshot: snapshot, applyProgram: applyProgram, usbPrepare: usbPrepare, toolPlan: toolPlan, toolingPdf: toolingPdf,
+    importStep: importStep, suggestOrder: suggestOrder
   };
   init();
 })();
