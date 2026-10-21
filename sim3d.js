@@ -146,18 +146,21 @@
     return sp;
   }
 
-  /* "AMADA" lettering with a ring emblem, drawn on a canvas (red background, white letters). */
+  /* Ring emblem followed by "AMADA" lettering, drawn on a canvas (red background, white letters). */
   function logoTexture() {
     var c = document.createElement('canvas'); c.width = 1024; c.height = 256;
     var x = c.getContext('2d');
     x.clearRect(0, 0, 1024, 256);
+    x.font = '900 170px "Arial Black", Arial, sans-serif'; x.textBaseline = 'middle'; x.textAlign = 'left';
+    var ring = 140, gap = 26, room = 1024 - 24 - ring - gap, w = x.measureText('AMADA').width;
+    if (w > room) { x.font = '900 ' + Math.floor(170 * room / w) + 'px "Arial Black", Arial, sans-serif'; w = room; }   // keep all letters on the beam
+    var left = (1024 - ring - gap - w) / 2;            // emblem and lettering centred together
     x.fillStyle = '#ffffff';
-    x.beginPath(); x.arc(150, 128, 78, 0, Math.PI * 2); x.fill();
+    x.beginPath(); x.arc(left + ring / 2, 128, 70, 0, Math.PI * 2); x.fill();
     x.fillStyle = '#c8102e';
-    x.beginPath(); x.arc(150, 128, 50, 0, Math.PI * 2); x.fill();
+    x.beginPath(); x.arc(left + ring / 2, 128, 45, 0, Math.PI * 2); x.fill();
     x.fillStyle = '#ffffff';
-    x.font = '900 190px "Arial Black", Arial, sans-serif'; x.textBaseline = 'middle'; x.textAlign = 'left';
-    x.fillText('MADA', 260, 136);
+    x.fillText('AMADA', left + ring + gap, 134);
     var t = new THREE.CanvasTexture(c); t.anisotropy = 4;
     return t;
   }
