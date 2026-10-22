@@ -1,7 +1,8 @@
 /* Bend order suggestions. Builds orders bend by bend (beam search) and scores each step with the same collision
    checks as the tooling planner: the part hitting the punch or die, flanges reaching the punch holder, no punch
    fitting between flanges. Turning the part over (FLIP) and turning it round (a bend line in another direction)
-   cost a little, so orders with fewer handling steps come first. Both gauge sides are tried for every bend, since
+   cost a little, so orders with fewer handling steps come first. app.js then ranks the best ones again by how many
+   tool stations they need. Both gauge sides are tried for every bend, since
    turning the part round often moves an earlier flange out of the way. Lower score is better. */
 (function () {
   'use strict';
@@ -43,8 +44,9 @@
       if (a.hitDie || isFinite(a.da) || isFinite(a.db)) { c += 1000; notes.push('hits the die'); }
       if (a.tooHigh) { c += 300; notes.push('a flange reaches the punch holder'); }
       if (a.tooLow) { c += 300; notes.push('a flange hangs below the die'); }
-      /* tie-break between orders that are equally fine: long bends first, short ones (corner flanges) last */
-      c += 0.1 * (1 - b.len / maxLen) * (n - prefix.length);
+      /* tie-break between orders that are equally fine: short bends first, the long sides last. The long sides then
+         go between the short flanges and can often share their punch, so fewer stations are needed. */
+      c += 0.1 * (b.len / maxLen) * (n - prefix.length);
       var boxed = isFinite(a.pa) && isFinite(a.pb);
       if (boxed && a.pb - a.pa < b.len - 10) { c += 500; notes.push('no punch fits between the flanges'); }
       else if (boxed) c += 1;                         // needs a short (sectioned) punch

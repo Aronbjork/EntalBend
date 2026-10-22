@@ -322,7 +322,7 @@
   /* opts: { k: K-factor } -> { thickness, radius, segs: [[[x,y],[x,y]]...], bends: [{p1, p2, angle, dir, radius, idx}],
      warns, info } */
   function unfold(text, opts) {
-    var k = opts && isFinite(opts.k) ? +opts.k : 0.5;
+    var k = opts && isFinite(opts.k) ? +opts.k : 0.345;
     var warns = [];
     var M = new Model(parse(text));
     var faces = M.faces(warns);

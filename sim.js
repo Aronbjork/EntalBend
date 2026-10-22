@@ -99,7 +99,7 @@
     var P = prep(cv, H), ctx = P.ctx;
     var ox = P.w / 2 - k * (uLo + uHi) / 2, oy = H - pad - 18 + k * vLo;
     var X = function (u) { return ox + u * k; }, Y = function (v) { return oy - v * k; };
-    cv._sim = { ox: ox, k: k, uLo: uLo, uHi: uHi, fr: [] };
+    cv._sim = { ox: ox, k: k, uLo: uLo, uHi: uHi, fr: [], st: [] };
 
     ctx.fillStyle = C.bg; ctx.fillRect(0, 0, P.w, H);
     /* machine bed */
@@ -115,6 +115,12 @@
         ctx.fillRect(X(t[0]), Y(6), (t[1] - t[0]) * k - 1, 12 * k);
       });
       ctx.globalAlpha = 1;
+      /* station letters; the strip around each station can be dragged to move it */
+      (d.tools.stations || []).forEach(function (st) {
+        var x0 = X(st.u0), x1 = X(st.u1);
+        text(ctx, st.name, (x0 + x1) / 2, Y(6) - 6, C.brand, 12, 'center');
+        cv._sim.st.push({ name: 'stn:' + st.name, x0: x0, x1: x1, y0: Y(6) - 20, y1: Y(-6) + 8 });
+      });
     }
     /* centre line */
     ctx.setLineDash([6, 5]); ctx.lineWidth = 1;
@@ -178,10 +184,12 @@
     else text(ctx, MACHINE_W + ' mm machine', X(0), 10, C.muted, 11, 'center');
   }
 
-  /* Which finger is under the pointer (CSS pixels on the top view canvas), or null. */
+  /* Which finger ('Z1', 'Z2') or station ('stn:A') is under the pointer (CSS pixels on the top view canvas), or null.
+     Fingers win where they overlap a station. */
   function hit(cv, px, py) {
     var s = cv._sim, res = null;
     if (!s) return null;
+    s.st.forEach(function (f) { if (px >= f.x0 && px <= f.x1 && py >= f.y0 && py <= f.y1) res = f.name; });
     s.fr.forEach(function (f) { if (px >= f.x0 && px <= f.x1 && py >= f.y0 && py <= f.y1) res = f.name; });
     return res;
   }

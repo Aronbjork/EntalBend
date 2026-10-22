@@ -194,3 +194,37 @@ Small tabs on the gauged edge
 "Ignore tabs narrower than (mm)" in the Program panel (default 60, 0 = off): the backgauge distance is measured to the
 farthest edge that is at least that wide, so a small tab on the edge does not move X and the auto fingers sit on the
 main edge. The tab still shows in the drawing. Set 0 to measure to the very farthest point as before.
+
+Simulator keys and whole part
+-----------------------------
+Left/right arrow (or up/down): previous/next bend. Space: bend. Home/End: first/last bend. The keys work when no
+input field has focus. "Whole part" bends every bend in order from the first, with a short pause between bends.
+
+Tooling setup PDF (two pages, print double sided)
+-------------------------------------------------
+Front: bed layout, one card per station (sections left to right, punch length, left/right end from the machine
+centre), warnings and the bend list. Back: all 3D pictures on one page. Very long bend lists continue on an extra page.
+
+Bend order suggestions
+----------------------
+Short bends go first and the long sides last, so the long sides fit between the short flanges and can often use the
+same punch. The best orders are ranked again by how many tool stations they need (one station counts as more work than
+a flip); the suggestion list shows the station count.
+
+Before writing to the USB stick
+-------------------------------
+A list of things to check comes up first: collisions and finger warnings, station plan warnings, missing punch, die
+or job reference, and a program number that is already on the stick. Cancel to fix them, or write anyway.
+
+Automatic backup
+----------------
+Saved programs live in this browser only. "Auto backup folder" (Saved programs panel) picks a folder, for example on
+OneDrive or a network drive; every save or delete then writes entalbend-backup-<date>.json there with all programs,
+settings and the punch library (one file per day). After a browser restart the first save may ask for permission to
+the folder again. Without a folder, a reminder appears when nothing was backed up for a week. Restore with Open file.
+
+Dragging stations in the top view
+---------------------------------
+With "Use stations in the simulator" ticked, the top view shows each station's punch with its letter. Drag the punch
+strip (or the letter) sideways to move the station: 5 mm steps, hold Shift for 1 mm. It is the same as the Move (mm)
+field in the station table; "Back to planned positions" undoes it. The fingers win where a finger lies over a station.

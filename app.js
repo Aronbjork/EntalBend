@@ -538,7 +538,7 @@
     var e = state.seq[state.simStep];
     if (!e) { box.innerHTML = ''; return; }
     if (!e.set) e.set = {};
-    box.innerHTML = '<h3>Settings for bend ' + (state.simStep + 1) + ' (as on the control)</h3><div class="grid">' +
+    box.innerHTML = '<summary>Settings for bend ' + (state.simStep + 1) + ' <span class="muted">(as on the control)</span></summary><div class="grid">' +
       SETTING_DEFS.map(function (d) {
         var v = e.set[d.k];
         return '<label>' + d.label + (d.note ? ' <span class="muted">(' + d.note + ')</span>' : '') +
@@ -613,8 +613,13 @@
     rows.forEach(function (r) { if (r.e.zAuto) autoFingers(r, segs); });
   }
 
-  var simAnim = null;
-  function stopSimAnim() { if (simAnim) { cancelAnimationFrame(simAnim); simAnim = null; } $('simPlay').textContent = 'Bend \u25B6'; }
+  var simAnim = null, simWait = null;
+  function stopSimAnim() {
+    if (simAnim) { cancelAnimationFrame(simAnim); simAnim = null; }
+    if (simWait) { clearTimeout(simWait); simWait = null; }
+    $('simPlay').textContent = 'Bend ▶';
+    $('simPlayAll').textContent = 'Whole part ▶▶';
+  }
 
   function setSimStep(n) {
     state.simStep = Math.max(0, n);
@@ -622,19 +627,41 @@
     stopSimAnim();
   }
 
-  function playSim() {
-    if (simAnim) { stopSimAnim(); return; }
-    if (state.simProgress >= 1) state.simProgress = 0;
+  /* Runs the current bend from where the slider is to the end, then calls done. */
+  function animateBend(ms, done) {
     var t0 = performance.now(), p0 = state.simProgress;
-    $('simPlay').textContent = 'Stop \u25A0';
     var tick = function (t) {
-      state.simProgress = Math.min(1, p0 + (t - t0) / 2500);
+      state.simProgress = Math.min(1, p0 + (t - t0) / ms);
       $('simProg').value = Math.round(state.simProgress * 100);
       drawSim();
       if (state.simProgress < 1) simAnim = requestAnimationFrame(tick);
-      else { simAnim = null; $('simPlay').textContent = 'Bend \u25B6'; }
+      else { simAnim = null; done(); }
     };
     simAnim = requestAnimationFrame(tick);
+  }
+
+  function playSim() {
+    if (simAnim || simWait) { stopSimAnim(); return; }
+    if (state.simProgress >= 1) state.simProgress = 0;
+    $('simPlay').textContent = 'Stop ■';
+    animateBend(2500, stopSimAnim);
+  }
+
+  /* The whole part: every bend in order from the first, with a short pause to show the part between bends. */
+  function playAll() {
+    if (simAnim || simWait) { stopSimAnim(); return; }
+    if (!state.seq.length) return;
+    setSimStep(0); renderTable();
+    $('simPlayAll').textContent = 'Stop ■';
+    var next = function () {
+      if (state.simStep >= state.seq.length - 1) { stopSimAnim(); return; }
+      simWait = setTimeout(function () {
+        state.simStep++; state.simProgress = 0; $('simProg').value = 0;
+        renderTable();
+        simWait = setTimeout(function () { simWait = null; animateBend(1800, next); }, 600);
+      }, 700);
+    };
+    simWait = setTimeout(function () { simWait = null; animateBend(1800, next); }, 400);
   }
 
   /* The die has V8 and V12 slots; bending is always done in the V8 slot at the back. */
@@ -703,7 +730,7 @@
      Angles and Up/Down come from the STEP. keepSeq: unfold again (K-factor changed) and keep the bend list. */
   function importStep(text, name, keepSeq) {
     var k = parseFloat($('kFactor').value);
-    if (!(k >= 0 && k <= 1)) k = 0.5;
+    if (!(k >= 0 && k <= 1)) k = 0.345;
     var res;
     try { res = STEP.unfold(text, { k: k }); }
     catch (err) { setStatus('Could not read the STEP file: ' + err.message, true); return; }
@@ -760,6 +787,8 @@
 
   /* ------------------------------------------------------------------ bend order suggestions */
 
+  var STATION_COST = 6;
+
   /* apply: use the best order straight away (after a STEP import). */
   function suggestOrder(apply, prefix) {
     var rows = computeRows();
@@ -768,10 +797,22 @@
     $('btnSuggest').disabled = true;
     setTimeout(function () {
       try {
-        var res = Sequence.suggest({ segs: outlineSegs(), bends: simBends(rows), thickness: parseFloat($('thickness').value) || 1, dieV: dieV(), flipPunch: $('simFlip').checked, horn: hornInfo() }, 3);
-        state.suggestions = res.map(function (s) {
+        var segs = outlineSegs(), bends = simBends(rows);
+        var res = Sequence.suggest({ segs: segs, bends: bends, thickness: parseFloat($('thickness').value) || 1, dieV: dieV(), flipPunch: $('simFlip').checked, horn: hornInfo() }, 12);
+        /* Rank again by tool stations: every extra station is more set-up work than a flip. */
+        res.forEach(function (s) {
+          s.stations = null;
+          if (!window.Tooling || !window.THREE) return;
+          try {
+            var ob = s.order.map(function (i) { return Object.assign({}, bends[i], { sign: s.signs[i] }); });
+            s.stations = Tooling.plan(planInput(ob, segs)).stations.length;
+          } catch (err) { /* leave unranked */ }
+          s.rank = s.score + (s.stations || 0) * STATION_COST;
+        });
+        res.sort(function (a, b) { return a.rank - b.rank; });
+        state.suggestions = res.slice(0, 3).map(function (s) {
           return {
-            ids: s.order.map(function (i) { return rows[i].e.id; }), flips: s.flips, turns: s.turns, boxed: s.boxed,
+            ids: s.order.map(function (i) { return rows[i].e.id; }), flips: s.flips, turns: s.turns, boxed: s.boxed, stations: s.stations,
             signs: s.order.map(function (i) { return s.signs[i]; }),
             turned: s.order.filter(function (i) { return s.signs[i] !== rows[i].e.sign; }).map(function (i) { return rows[i].e.id; }),
             problems: s.problems.map(function (p) { return { step: p.step, id: rows[p.bend].e.id, notes: p.notes }; })
@@ -814,7 +855,7 @@
       list.map(function (s, i) {
         var isCur = s.ids.map(function (id, k) { return id + s.signs[k]; }).join(',') === cur;
         return '<div class="sug' + (isCur ? ' cur' : '') + '"><b>' + (i + 1) + '.</b><span class="ord">' + s.ids.map(esc).join(' \u2192 ') + '</span>' +
-          '<span class="muted">' + s.flips + ' flip' + (s.flips === 1 ? '' : 's') + ', ' + s.turns + ' turn' + (s.turns === 1 ? '' : 's') +
+          '<span class="muted">' + (s.stations ? s.stations + ' station' + (s.stations === 1 ? '' : 's') + ', ' : '') + s.flips + ' flip' + (s.flips === 1 ? '' : 's') + ', ' + s.turns + ' turn' + (s.turns === 1 ? '' : 's') +
           (s.boxed ? ', ' + s.boxed + ' between flanges' : '') + '</span>' +
           (s.turned.length ? '<span class="muted">gauge on the other side: ' + s.turned.map(esc).join(', ') + '</span>' : '') +
           (s.problems.length ? '<span class="bad">' + s.problems.map(function (p) { return esc(p.id) + ': ' + esc(p.notes.join(', ')); }).join('; ') + '</span>' : '<span class="muted">no collisions found</span>') +
@@ -896,17 +937,20 @@
     return h;
   }
 
+  function planInput(bends, segs, moves) {
+    return {
+      key: meshKey(bends, segs), segs: segs, bends: bends, thickness: parseFloat($('thickness').value) || 1, dieV: dieV(),
+      flipPunch: $('simFlip').checked, punchStock: punchLib, die: { len: parseFloat($('tlDieLen').value) || 0, centre: parseFloat($('tlDieC').value) || 0 },
+      clear: parseFloat($('tlClear').value) || 0, short: parseFloat($('tlShort').value) || 0, gap: parseFloat($('tlGap').value) || 0,
+      hornExt: parseFloat($('tlHorn').value) || 0, hornH: parseFloat($('tlHornH').value), moves: moves || {}
+    };
+  }
+
   /* The station plan for these rows (cached), or null. force: plan even when stations are not in use. */
   function toolPlan(rows, force) {
     if (!state.model || !rows.length || !window.Tooling || !window.THREE) return null;
     if (!force && !$('tlUse').checked) return null;
-    var segs = outlineSegs(), bends = simBends(rows);
-    var inp = {
-      key: meshKey(bends, segs), segs: segs, bends: bends, thickness: parseFloat($('thickness').value) || 1, dieV: dieV(),
-      flipPunch: $('simFlip').checked, punchStock: punchLib, die: { len: parseFloat($('tlDieLen').value) || 0, centre: parseFloat($('tlDieC').value) || 0 },
-      clear: parseFloat($('tlClear').value) || 0, short: parseFloat($('tlShort').value) || 0, gap: parseFloat($('tlGap').value) || 0,
-      hornExt: parseFloat($('tlHorn').value) || 0, hornH: parseFloat($('tlHornH').value), moves: state.stationMoves
-    };
+    var segs = outlineSegs(), bends = simBends(rows), inp = planInput(bends, segs, state.stationMoves);
     var key = JSON.stringify([inp.key, bends.map(function (b) { return [b.angle, b.dir, b.sign]; }), inp.thickness, inp.dieV, inp.flipPunch,
       inp.punchStock.map(function (s) { return [s.len, s.qty, s.horn || '']; }), inp.die, inp.clear, inp.short, inp.gap, inp.hornExt, inp.hornH, inp.moves]);
     if (planCache.key !== key) {
@@ -958,9 +1002,11 @@
     }
     var moved = p.stations.some(function (st) { return st.move; });
     box.innerHTML = '<div class="tableWrap"><table class="plain stnTable"><thead><tr><th>Station</th><th>Punch sections, left to right</th>' +
-      '<th>Position from centre</th><th title="Move the station from where the plan puts it. + = right, - = left. Shift+click the arrows for 1 mm.">Move (mm)</th><th>Bends</th></tr></thead><tbody>' +
-      p.stations.map(function (st) {
+      '<th title="Swap the station with its neighbour on the bed">Place on bed</th><th>Position from centre</th><th title="Move the station from where the plan puts it. + = right, - = left. Shift+click the arrows for 1 mm.">Move (mm)</th><th>Bends</th></tr></thead><tbody>' +
+      p.stations.slice().sort(function (a, b) { return a.u0 - b.u0; }).map(function (st) {      // as they sit on the bed, left to right
         return '<tr data-stn="' + st.name + '"><td><b>' + st.name + '</b></td><td>' + (st.punch.length ? st.parts.join(' + ') + ' = ' + st.len : '<span class="bad">missing ' + st.len + '</span>') + '</td>' +
+          '<td class="move"><button class="mini" type="button" data-swap="-1" title="Swap with the station on its left">⇤</button>' +
+          '<button class="mini" type="button" data-swap="1" title="Swap with the station on its right">⇥</button></td>' +
           '<td>' + st.u0 + ' to ' + st.u1 + ' mm</td>' +
           '<td class="move"><button class="mini" type="button" data-nudge="-10" title="Left 10 mm">\u25C0</button>' +
           '<input type="number" step="5" data-move value="' + st.move + '">' +
@@ -991,7 +1037,7 @@
         };
         add(sim3dData(rows, 0, 0, segs), 0, 1500, 'Overview: all stations, part at bend 1');
         rows.forEach(function (r, i) {
-          var d = sim3dData(rows, i, 1, segs), pb = plan.bends[i];
+          var d = sim3dData(rows, i, 0, segs), pb = plan.bends[i];      // before the bend: the sheet lies flat, earlier flanges bent
           add(d, d.shift, Math.min(1600, Math.max(500, span, pb.toolLen) * 1.25), 'Bend ' + r.n + ' \u00b7 station ' + pb.stationName + ' \u00b7 ' +
             r.e.angle + '\u00b0 ' + (r.e.dir === 'UP' ? 'up' : 'down') + (r.flip ? ' (FLIP)' : '') + ' \u00b7 X ' + f2(r.xFinal) + ' \u00b7 Z1 ' + d.z1 + ' / Z2 ' + d.z2);
         });
@@ -1050,6 +1096,23 @@
     return { n: n, pli: pli, fprog: idx.bytes, existing: idx.existing, bends: steps.length };
   }
 
+  /* Everything worth a second look before the program goes to the machine. Returns true to go ahead. */
+  function confirmExport(p) {
+    var out = [], rows = computeRows(), segs = outlineSegs();
+    if (!$('job').value.trim()) out.push('No job reference: the program has no name on the control.');
+    if (!$('punch').value.trim()) out.push('No punch is set in the Program panel.');
+    if (!$('die').value.trim()) out.push('No die is set in the Program panel.');
+    if (p.existing) out.push('Program ' + p.n + ' is already on the stick and will be replaced.');
+    rows.forEach(function (r) {
+      Sim.analyze(simData(r, axisValues(r.e), segs)).warns.forEach(function (w) { out.push('Bend ' + r.n + ': ' + w); });
+    });
+    var plan = toolPlan(rows, true);
+    if (plan) plan.warns.forEach(function (w) { out.push(w); });
+    if (!out.length) return true;
+    var more = out.length > 12 ? '\n...and ' + (out.length - 12) + ' more.' : '';
+    return window.confirm('Check before writing ' + p.n + '.PLI:\n\n- ' + out.slice(0, 12).join('\n- ') + more + '\n\nWrite it anyway?');
+  }
+
   function usbDone(p, where) {
     setStatus(p.n + '.PLI (' + p.bends + ' bends) and FPROG.DAT ' + where + (p.existing ? ' Program ' + p.n + ' was replaced.' : '') +
       ' Check the program on the machine before bending a real part.');
@@ -1067,6 +1130,7 @@
       var dir = await window.showDirectoryPicker({ mode: 'readwrite' });
       var orig = new Uint8Array(await (await (await dir.getFileHandle('FPROG.DAT')).getFile()).arrayBuffer());
       var p = usbPrepare(orig);
+      if (!confirmExport(p)) { setStatus('USB export cancelled.'); return; }
       await usbWrite(dir, 'FPROG.BAK', orig);
       await usbWrite(dir, p.n + '.PLI', p.pli);
       await usbWrite(dir, 'FPROG.DAT', p.fprog);
@@ -1083,6 +1147,7 @@
     if (!file) return;
     file.arrayBuffer().then(function (buf) {
       var p = usbPrepare(new Uint8Array(buf));
+      if (!confirmExport(p)) { setStatus('USB export cancelled.'); return; }
       download(p.n + '.PLI', new Blob([p.pli]), 'application/octet-stream');
       setTimeout(function () { download('FPROG.DAT', new Blob([p.fprog]), 'application/octet-stream'); }, 300);
       usbDone(p, 'downloaded. Copy both onto the stick.');
@@ -1101,8 +1166,12 @@
     if (!dbPromise) {
       dbPromise = new Promise(function (resolve, reject) {
         if (!window.indexedDB) { reject(new Error('This browser cannot store programs.')); return; }
-        var req = indexedDB.open('entalbend', 1);
-        req.onupgradeneeded = function () { req.result.createObjectStore('programs', { keyPath: 'name' }); };
+        var req = indexedDB.open('entalbend', 2);
+        req.onupgradeneeded = function () {
+          var db = req.result;
+          if (!db.objectStoreNames.contains('programs')) db.createObjectStore('programs', { keyPath: 'name' });
+          if (!db.objectStoreNames.contains('meta')) db.createObjectStore('meta');      // the auto backup folder
+        };
         req.onsuccess = function () { resolve(req.result); };
         req.onerror = function () { reject(req.error || new Error('Could not open the program store.')); };
       });
@@ -1116,6 +1185,17 @@
       return new Promise(function (resolve, reject) {
         var tx = db.transaction('programs', mode);
         var req = fn(tx.objectStore('programs'));
+        tx.oncomplete = function () { resolve(req ? req.result : undefined); };
+        tx.onerror = tx.onabort = function () { reject(tx.error || new Error('Storage error.')); };
+      });
+    });
+  }
+
+  function metaCall(mode, fn) {
+    return openDb().then(function (db) {
+      return new Promise(function (resolve, reject) {
+        var tx = db.transaction('meta', mode);
+        var req = fn(tx.objectStore('meta'));
         tx.oncomplete = function () { resolve(req ? req.result : undefined); };
         tx.onerror = tx.onabort = function () { reject(tx.error || new Error('Storage error.')); };
       });
@@ -1201,6 +1281,7 @@
         if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(function () {});
         setStatus('Saved "' + name + '".');
         renderLibrary();
+        autoBackup(true);
       });
     }).catch(function (err) { setStatus('Could not save: ' + err.message, true); });
   }
@@ -1219,6 +1300,7 @@
       if (state.currentName === name) state.currentName = '';
       setStatus('Deleted "' + name + '".');
       renderLibrary();
+      autoBackup(true);
     }).catch(function (err) { setStatus('Could not delete: ' + err.message, true); });
   }
 
@@ -1248,14 +1330,78 @@
   }
 
   /* One file with everything kept in this browser: all saved programs, the settings and the punch library. */
-  function backupAll() {
+  function backupData() {
     saveSettings();
-    dbCall('readonly', function (s) { return s.getAll(); }).then(function (list) {
+    return dbCall('readonly', function (s) { return s.getAll(); }).then(function (list) {
       var o = { format: 'entalbend-backup', version: 1, savedAt: new Date().toISOString(), programs: list, settings: null, punchLib: punchLib };
       try { o.settings = JSON.parse(localStorage.getItem('entalbend.settings') || 'null'); } catch (e) { /* none */ }
+      return o;
+    });
+  }
+
+  function backupAll() {
+    backupData().then(function (o) {
+      var list = o.programs;
+      markBackup();
+      metaCall('readonly', function (s) { return s.get('backupDir'); }).then(function (d) { showBackupInfo(d && d.name); }).catch(function () {});
       download('entalbend-backup-' + new Date().toISOString().slice(0, 10) + '.json', JSON.stringify(o), 'application/json');
       setStatus('Backed up ' + list.length + ' program' + (list.length === 1 ? '' : 's') + ', the settings and ' + punchLib.length + ' punch section' + (punchLib.length === 1 ? '' : 's') + '.');
     }).catch(function (err) { setStatus('Could not back up: ' + err.message, true); });
+  }
+
+  /* Automatic backup: once a folder is picked, every save writes entalbend-backup-<date>.json there (one file a day,
+     the latest save of the day wins). The folder handle is kept in IndexedDB; the browser may ask again for
+     permission after a restart, which it can only do on a click, so the first save of a session asks. */
+  function markBackup() { try { localStorage.setItem('entalbend.lastBackup', new Date().toISOString()); } catch (e) { /* storage not available */ } }
+
+  function lastBackup() { try { return localStorage.getItem('entalbend.lastBackup'); } catch (e) { return null; } }
+
+  function showBackupInfo(dirName) {
+    var last = lastBackup();
+    $('autoBackupInfo').textContent = (dirName ? 'Auto backup to folder "' + dirName + '". ' : 'No auto backup folder set. ') +
+      (last ? 'Last backup ' + new Date(last).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' }) + '.' : 'No backup made yet.');
+  }
+
+  async function autoBackup(ask) {
+    try {
+      var dir = await metaCall('readonly', function (s) { return s.get('backupDir'); });
+      if (!dir) return;
+      var perm = await dir.queryPermission({ mode: 'readwrite' });
+      if (perm !== 'granted' && ask) perm = await dir.requestPermission({ mode: 'readwrite' });
+      if (perm !== 'granted') { showBackupInfo(dir.name); return; }
+      var o = await backupData();
+      await usbWrite(dir, 'entalbend-backup-' + o.savedAt.slice(0, 10) + '.json', JSON.stringify(o));
+      markBackup();
+      showBackupInfo(dir.name);
+    } catch (err) {
+      setStatus('Auto backup failed: ' + (err && err.message ? err.message : err) + '. Use Back up all, or pick the backup folder again.', true);
+    }
+  }
+
+  async function pickBackupDir() {
+    if (!window.showDirectoryPicker) { setStatus('This browser cannot write to a folder. Use Back up all now and then, or use Chrome/Edge.', true); return; }
+    try {
+      var dir = await window.showDirectoryPicker({ mode: 'readwrite', id: 'entalbend-backup' });
+      await metaCall('readwrite', function (s) { return s.put(dir, 'backupDir'); });
+      await autoBackup(true);
+      setStatus('Programs are now backed up to "' + dir.name + '" every time you save.');
+    } catch (err) {
+      if (err && err.name === 'AbortError') return;
+      setStatus('Could not set the backup folder: ' + (err && err.message ? err.message : err), true);
+    }
+  }
+
+  /* At start: back up if the browser still allows it, and remind when nothing was backed up for a week. */
+  function startupBackup() {
+    metaCall('readonly', function (s) { return s.get('backupDir'); }).then(function (dir) {
+      showBackupInfo(dir && dir.name);
+      if (dir) { autoBackup(false); return; }
+      var last = lastBackup();
+      dbCall('readonly', function (s) { return s.count(); }).then(function (n) {
+        if (n && (!last || Date.now() - new Date(last).getTime() > 7 * 864e5))
+          setStatus('Your saved programs have not been backed up for a week or more. Pick an auto backup folder in Saved programs, or use Back up all.', true);
+      });
+    }).catch(function () { /* no storage */ });
   }
 
   function restoreAll(p) {
@@ -1338,6 +1484,8 @@
     $('btnSaveProg').addEventListener('click', saveProgram);
     $('btnExportProg').addEventListener('click', exportProgram);
     $('btnBackupAll').addEventListener('click', backupAll);
+    $('btnBackupDir').addEventListener('click', pickBackupDir);
+    startupBackup();
     $('progFileInput').addEventListener('change', function (ev) { loadFile(ev.target.files[0]); ev.target.value = ''; });
     $('progName').addEventListener('keydown', function (ev) { if (ev.key === 'Enter') saveProgram(); });
     $('libBody').addEventListener('click', function (ev) {
@@ -1415,12 +1563,26 @@
       var name = Sim.hit(simTop, ev.offsetX, ev.offsetY), cur = simRow();
       if (!name || !cur) return;
       state.simDrag = { name: name, range: [simTop._sim.uLo, simTop._sim.uHi], row: state.simStep };
+      if (name.indexOf('stn:') === 0) {
+        state.simDrag.stn = name.slice(4);
+        state.simDrag.u0 = Sim.uAt(simTop, ev.offsetX);
+        state.simDrag.move0 = +state.stationMoves[state.simDrag.stn] || 0;
+      }
       simTop.setPointerCapture(ev.pointerId);
       ev.preventDefault();
     });
     simTop.addEventListener('pointermove', function (ev) {
       var dr = state.simDrag;
-      if (!dr) { simTop.style.cursor = Sim.hit(simTop, ev.offsetX, ev.offsetY) ? 'ew-resize' : 'default'; return; }
+      if (!dr) { var h = Sim.hit(simTop, ev.offsetX, ev.offsetY); simTop.style.cursor = h ? (h.indexOf('stn:') === 0 ? 'grab' : 'ew-resize') : 'default'; return; }
+      if (dr.stn) {
+        /* station: 5 mm steps, Shift for 1 mm. The part and automatic fingers follow it. */
+        var step = ev.shiftKey ? 1 : 5, mv = Math.round((dr.move0 + Sim.uAt(simTop, ev.offsetX) - dr.u0) / step) * step;
+        if (mv === (+state.stationMoves[dr.stn] || 0)) return;
+        state.stationMoves = Object.assign({}, state.stationMoves);
+        if (mv) state.stationMoves[dr.stn] = mv; else delete state.stationMoves[dr.stn];
+        if (!dr.frame) dr.frame = requestAnimationFrame(function () { dr.frame = null; if (state.simDrag === dr) renderTable(); });
+        return;
+      }
       var e = state.seq[dr.row];
       if (!e) return;
       var u = Sim.uAt(simTop, ev.offsetX), lim = Sim.MACHINE_W / 2 - Sim.FINGER_W / 2;
@@ -1456,6 +1618,23 @@
       } else if (ev.target.id === 'setReset') { e.set = {}; renderSettings(); }
     });
     $('simPlay').addEventListener('click', playSim);
+    $('simPlayAll').addEventListener('click', playAll);
+    /* Simulator keys: arrows step through the bends, space bends, Home/End jump to the first/last bend. */
+    document.addEventListener('keydown', function (ev) {
+      var t = ev.target;
+      if (ev.ctrlKey || ev.altKey || ev.metaKey || !state.seq.length || $('workSim').hidden) return;
+      if (t && (t.isContentEditable || /^(INPUT|SELECT|TEXTAREA)$/.test(t.tagName) && !(t.tagName === 'INPUT' && t.type === 'range'))) return;
+      if (t && t.tagName === 'BUTTON' && ev.key === ' ') return;          // space presses the focused button itself
+      var last = state.seq.length - 1;
+      if (ev.key === 'ArrowRight' || ev.key === 'ArrowDown') setSimStep(Math.min(state.simStep + 1, last));
+      else if (ev.key === 'ArrowLeft' || ev.key === 'ArrowUp') setSimStep(state.simStep - 1);
+      else if (ev.key === 'Home') setSimStep(0);
+      else if (ev.key === 'End') setSimStep(last);
+      else if (ev.key === ' ') { ev.preventDefault(); playSim(); return; }
+      else return;
+      ev.preventDefault();
+      renderTable();
+    });
     $('simProg').addEventListener('input', function () { stopSimAnim(); state.simProgress = (+$('simProg').value) / 100; drawSim(); });
     $('simAuto').addEventListener('click', function () {
       var cur = simRow();
@@ -1510,6 +1689,17 @@
     });
     $('tlPlan').addEventListener('click', function (ev) {
       if (ev.target.id === 'tlResetMoves') { state.stationMoves = {}; renderTable(); return; }
+      var sw = ev.target.closest('button[data-swap]');
+      if (sw && state.plan) {
+        /* bed order from the left, from the planned positions */
+        var ord = state.plan.stations.slice().sort(function (p, q) { return (p.u0 - p.move) - (q.u0 - q.move); }).map(function (st) { return st.name; });
+        var i = ord.indexOf(sw.closest('tr[data-stn]').dataset.stn), j = i + (+sw.dataset.swap);
+        if (i < 0 || j < 0 || j >= ord.length) return;
+        ord[i] = ord.splice(j, 1, ord[i])[0];
+        state.stationMoves = Object.assign({}, state.stationMoves, { _order: ord.join('') });
+        renderTable();
+        return;
+      }
       var btn = ev.target.closest('button[data-nudge]');
       if (!btn) return;
       var tr = btn.closest('tr[data-stn]'), cur = +state.stationMoves[tr.dataset.stn] || 0;
@@ -1570,6 +1760,20 @@
     }
 
     if (typeof ResizeObserver !== 'undefined') new ResizeObserver(sizeCanvas).observe($('dropZone'));
+    Array.prototype.forEach.call(document.querySelectorAll('.workTabs [data-work]'), function (btn) {
+      btn.addEventListener('click', function () {
+        var sim = btn.dataset.work === 'sim';
+        Array.prototype.forEach.call(document.querySelectorAll('.workTabs [data-work]'), function (x) { x.classList.toggle('on', x === btn); });
+        $('workSim').hidden = !sim;
+        $('workTool').hidden = sim;
+        $('seqTools').hidden = !sim;
+        if (sim) drawSim();
+      });
+    });
+    $('seqToggle').addEventListener('click', function () {
+      var hide = $('bendWork').classList.toggle('noTable');
+      $('seqToggle').textContent = hide ? 'Show table' : 'Hide table';
+    });
     window.addEventListener('resize', sizeCanvas);
     sizeCanvas();
     renderTable();

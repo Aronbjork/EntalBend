@@ -55,7 +55,7 @@ p { margin: 0; }
 
 /* Header */
 .top { position: sticky; top: 0; z-index: 20; background: var(--surface); border-bottom: 1px solid var(--border); }
-.top-inner { max-width: 1600px; margin: 0 auto; padding: 12px 20px; display: flex; align-items: center; gap: 18px; }
+.top-inner { margin: 0 auto; padding: 12px 20px; display: flex; align-items: center; gap: 18px; }
 .logo { height: 40px; width: auto; display: block; }
 :root[data-theme="dark"] .logo { filter: invert(1) hue-rotate(180deg); }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .logo { filter: invert(1) hue-rotate(180deg); } }
@@ -78,7 +78,7 @@ p { margin: 0; }
 @media (max-width: 480px) { .top-title { display: none; } }
 
 /* Layout */
-.page { max-width: 1600px; margin: 0 auto; padding: 20px 20px 48px; }
+.page { margin: 0 auto; padding: 20px 20px 48px; }
 @media (max-width: 640px) { .page { padding: 16px 16px 40px; } }
 .layout { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 20px; margin-bottom: 20px; }
 .side { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
@@ -226,7 +226,7 @@ td.notes { white-space: normal; min-width: 220px; }
 
 .simStage { position: relative; margin-bottom: 10px; }
 .simStage .sim3d { margin-bottom: 0; }
-.sim3d { position: relative; height: clamp(600px, 82vh, 1000px); background: var(--canvas); border-radius: var(--radius-s); overflow: hidden; margin-bottom: 10px; }
+.sim3d { position: relative; height: 100%; background: var(--canvas); border-radius: var(--radius-s); overflow: hidden; margin-bottom: 10px; }
 .sim3d canvas { display: block; width: 100%; height: 100%; }
 .simTabs { display: flex; gap: 8px; align-items: center; margin: 4px 0 10px; flex-wrap: wrap; }
 .simTabs .mini.on { background: var(--brand); color: #fff; border-color: var(--brand); }
@@ -282,3 +282,38 @@ td.ctr { text-align: center; }
 .simBar label.inline { font-size: 15px; gap: 10px; }
 .simBar input[type=range] { width: 220px; height: 28px; accent-color: var(--brand); }
 .simBar input[type=number] { width: 88px; font-size: 16px; padding: 8px 10px; }
+
+/* Bend table and simulator in one frame that fills the window: the table is docked at the top,
+   the 3D view takes the rest. Header 64 + panel padding and heading ~110. */
+.bends { scroll-margin-top: 84px; }
+.simStage { display: flex; flex-direction: column; height: clamp(560px, calc(100vh - 174px), 1300px);
+  background: var(--canvas); border: 1px solid var(--border); border-radius: var(--radius-s); overflow: hidden; }
+.seqDock { flex: none; max-height: 42%; overflow: auto; background: var(--surface); border-bottom: 1px solid var(--border); }
+.seqDock .tableWrap { margin: 0; border: 0; border-radius: 0; overflow: visible; }
+.seqDock thead th { position: sticky; top: 0; z-index: 1; }
+.noTable .seqDock { display: none; }
+.simView { position: relative; flex: 1; min-height: 0; }
+.simView .sim3d { border-radius: 0; }
+#simTopWrap { height: 100%; overflow: auto; padding-bottom: 90px; }
+
+/* Settings for the selected bend: a fold-away card inside the 3D window, top right */
+.simSet { position: absolute; top: 12px; right: 12px; z-index: 5; width: 340px; max-height: calc(100% - 110px); overflow: auto;
+  margin: 0; padding: 10px 14px; border: 1px solid var(--border); border-radius: 14px;
+  background: color-mix(in srgb, var(--surface) 90%, transparent); backdrop-filter: blur(6px); box-shadow: var(--shadow); }
+.simSet:empty { display: none; }
+.simSet > summary { font-size: 14px; margin: 0; }
+.simSet[open] > summary { margin-bottom: 10px; }
+.simSet .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.simSet .grid input { padding: 6px 8px; font-size: 13px; }
+.simSet .tools .muted.small { flex-basis: 100%; }
+@media (max-width: 1080px) {
+  .simSet { position: static; width: auto; max-height: none; margin-bottom: 10px; box-shadow: none; }
+}
+
+/* Tabs on the bend panel: simulator / tooling setup */
+.workTabs { display: flex; gap: 8px; flex-wrap: wrap; }
+.workTabs .mini { padding: 8px 18px; font-size: 15px; font-family: var(--font-head); }
+.workTabs .mini.on { background: var(--brand); color: #fff; border-color: var(--brand); }
+#workTool { margin-top: 14px; }
+#workTool .toolSet { margin-top: 0; padding-top: 0; border-top: 0; }
+#autoBackupInfo { margin: 8px 0 0; }

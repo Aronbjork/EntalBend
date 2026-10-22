@@ -232,7 +232,8 @@
 
   /* inp: { key, segs, bends: [{id, p1, p2, len, angle, dir, sign}], thickness, dieV, flipPunch,
             punchStock ([{len, qty}] or text), die: {len, centre}, clear, short, gap,
-            moves: { A: mm, ... } stations moved by hand from where the plan puts them (+ = right) } */
+            moves: { A: mm, ..., _order: 'BA' } stations moved by hand from where the plan puts them (+ = right),
+            and their order on the bed from the left } */
   function plan(inp) {
     var warns = [], clear = Math.max(0, inp.clear || 0), short = Math.max(0, inp.short || 0), minGap = Math.max(0, inp.gap || 0);
     var ps = parseStock(inp.punchStock);
@@ -384,20 +385,30 @@
 
       /* Gaps: wide enough that the part on one station stays clear of the punch of the next (the punches come down
          together; the die runs under all stations). */
-      var total = 0;
-      stations.forEach(function (st, i) {
-        if (i) { st.gapBefore = Math.ceil(Math.max(minGap, stations[i - 1].overR + 10, st.overL + 10) / 5) * 5; total += st.gapBefore; }
+      var total = 0, bed = bedOrder(stations);
+      bed.forEach(function (st, i) {
+        if (i) { st.gapBefore = Math.ceil(Math.max(minGap, bed[i - 1].overR + 10, st.overL + 10) / 5) * 5; total += st.gapBefore; }
         else st.gapBefore = 0;
         total += st.width;
       });
       var u = dieC - total / 2;
-      stations.forEach(function (st) {
+      bed.forEach(function (st) {
         u += st.gapBefore;
         st.u0 = Math.round(u); st.u1 = Math.round(u + st.width); st.centre = (st.u0 + st.u1) / 2;
         u += st.width;
       });
       return { stations: stations, total: total, warns: extra, tc: B.map(function (bd) { return bd.tc; }), slack: B.map(function (bd) { return bd.slack; }),
         station: B.map(function (bd) { return bd.station; }), extra: B.map(function (bd) { return bd.extra; }) };
+    }
+
+    /* Left to right on the bed: in order of first use, unless the stations were put in another order by hand
+       (moves._order, a string of station names such as "BA"). */
+    function bedOrder(stations) {
+      var ord = String((inp.moves && inp.moves._order) || '');
+      return stations.slice().sort(function (p, q) {
+        var a = ord.indexOf(p.name), b = ord.indexOf(q.name);
+        return (a < 0 ? 99 + p.name.charCodeAt(0) : a) - (b < 0 ? 99 + q.name.charCodeAt(0) : b);
+      });
     }
 
     /* A full length punch is handiest, but when the stations do not fit on the die, use shorter punches for the
@@ -433,17 +444,19 @@
       st.u0 += st.move; st.u1 += st.move; st.centre += st.move;
     });
     if (total > dieL) warns.push('The stations need ' + Math.ceil(total) + ' mm, but the die is only ' + dieL + ' mm long. Split the job or use a longer die.');
-    stations.forEach(function (st, i) {
+    var byPos = stations.slice().sort(function (p, q) { return p.u0 - q.u0; });
+    byPos.forEach(function (st, i) {
       if (st.u0 < d0 - 0.5) warns.push('Station ' + st.name + ' sticks out ' + Math.round(d0 - st.u0) + ' mm past the left end of the die.');
       if (st.u1 > d1 + 0.5) warns.push('Station ' + st.name + ' sticks out ' + Math.round(st.u1 - d1) + ' mm past the right end of the die.');
       if (st.u0 - st.overL < -BED / 2 || st.u1 + st.overR > BED / 2) warns.push('Station ' + st.name + ': the part reaches past the end of the bed.');
       if (!i) return;
-      var pr = stations[i - 1], gap = st.u0 - pr.u1, need = Math.max(pr.overR, st.overL);
+      var pr = byPos[i - 1], gap = st.u0 - pr.u1, need = Math.max(pr.overR, st.overL);
       if (gap < 0) warns.push('Stations ' + pr.name + ' and ' + st.name + ' overlap by ' + Math.round(-gap) + ' mm.');
       else if (gap < need + 5) warns.push('Stations ' + pr.name + ' and ' + st.name + ' are ' + Math.round(gap) + ' mm apart; the part needs about ' + Math.ceil(need + 5) + ' mm so it stays clear of the other punch.');
     });
 
-    var tools = { punch: [], die: [[dieC - dieL / 2, dieC + dieL / 2]], hornExt: hornExt, hornH: hornH };
+    var tools = { punch: [], die: [[dieC - dieL / 2, dieC + dieL / 2]], hornExt: hornExt, hornH: hornH,
+      stations: stations.map(function (st) { return { name: st.name, u0: st.u0, u1: st.u1 }; }) };
     stations.forEach(function (st) {
       var x = st.u0;
       st.tips.forEach(function (T, i) { tools.punch.push([x, x + T, st.kinds[i]]); x += T; });
@@ -471,7 +484,7 @@
     pg.rect(0, 0, 842, 6, { fill: BRAND });
     pg.text(36, 38, title, { size: 17, bold: true });
     pg.text(806, 30, 'EntalBend · Amada HFE 80-25', { size: 8.5, color: MUTED, align: 'right' });
-    pg.text(806, 42, info.date + (pageNo ? '  ·  page ' + pageNo : ''), { size: 8.5, color: MUTED, align: 'right' });
+    pg.text(806, 42, info.date + (pageNo ? '  ·  ' + 'page ' + pageNo : ''), { size: 8.5, color: MUTED, align: 'right' });
     var f = [['Program', info.program], ['Job', info.job], ['Material', info.material], ['Thickness', info.thickness + ' mm'],
       ['Punch', info.punch], ['Die', (info.die ? info.die + ', ' : '') + 'small V slot at the back'], ['Drawing', info.source]];
     var x = 36;
@@ -489,7 +502,7 @@
     var h = o.rowH || 15, cx = x;
     pg.rect(x, y, cols.reduce(function (s, c) { return s + c.w; }, 0), h, { fill: '#f1f3f4' });
     cols.forEach(function (c) {
-      pg.text(c.align === 'right' ? cx + c.w - 5 : cx + 5, y + h - 4.5, c.t, { size: 7.8, bold: true, color: '#444444', align: c.align === 'right' ? 'right' : 'left', maxW: c.w - 8 });
+      pg.text(c.align === 'right' ? cx + c.w - 5 : cx + 5, y + h - 4.5, c.t, { size: o.size ? o.size - 0.8 : 7.8, bold: true, color: '#444444', align: c.align === 'right' ? 'right' : 'left', maxW: c.w - 8 });
       cx += c.w;
     });
     y += h;
@@ -498,8 +511,8 @@
       cols.forEach(function (c, i) {
         var cell = r[i], col = INK, bold = false;
         if (cell && typeof cell === 'object') { col = cell.color || INK; bold = !!cell.bold; cell = cell.t; }
-        pg.text(c.align === 'right' ? cx + c.w - 5 : cx + 5, y + h - 4.5, cell === undefined || cell === null ? '' : String(cell),
-          { size: 8.3, color: col, bold: bold, align: c.align === 'right' ? 'right' : 'left', maxW: c.w - 8 });
+        pg.text(c.align === 'right' ? cx + c.w - 5 : cx + 5, y + h / 2 + (o.size || 8.3) * 0.36, cell === undefined || cell === null ? '' : String(cell),
+          { size: o.size || 8.3, color: col, bold: bold, align: c.align === 'right' ? 'right' : 'left', maxW: c.w - 8 });
         cx += c.w;
       });
       pg.line(x, y + h, cx, y + h, { color: GRID, w: 0.5 });
@@ -525,102 +538,111 @@
     });
   }
 
-  /* Whole bed at scale, then each station at its own scale. */
+  /* Whole bed at scale, large enough to read at the machine. Returns the y below it. */
   function bedDrawing(pg, plan, y) {
     var x0 = 36, W = 770, k = W / BED, X = function (u) { return x0 + (u + BED / 2) * k; };
-    pg.text(36, y, 'Bed layout (' + BED + ' mm, seen from the operator side)', { size: 10.5, bold: true });
-    y += 14;
-    pg.rect(x0, y, W, 44, { fill: '#f7f8f8', stroke: GRID, w: 0.6 });
+    pg.text(36, y, 'Bed layout (' + BED + ' mm, seen from the operator side)', { size: 11, bold: true });
+    y += 22;
+    pg.rect(x0, y, W, 50, { fill: '#f7f8f8', stroke: GRID, w: 0.6 });
     for (var u = -BED / 2; u <= BED / 2; u += 250) {
-      pg.line(X(u), y + 44, X(u), y + 48, { color: MUTED, w: 0.5 });
-      pg.text(X(u), y + 57, sgnMm(u), { size: 6.8, color: MUTED, align: 'center' });
+      pg.line(X(u), y + 50, X(u), y + 55, { color: MUTED, w: 0.6 });
+      pg.text(X(u), y + 64, u ? sgnMm(u) : '0 = centre', { size: 7.5, color: u ? MUTED : CRIT, align: 'center' });
     }
-    pg.line(X(0), y - 2, X(0), y + 46, { color: CRIT, w: 0.6, dash: [3, 2] });
-    pg.text(X(0) + 3, y + 8, 'centre', { size: 6.5, color: CRIT });
+    pg.line(X(0), y - 2, X(0), y + 52, { color: CRIT, w: 0.7, dash: [3, 2] });
     var dl = plan.die.len, dc = plan.die.centre;
-    pg.rect(X(dc - dl / 2), y + 24, dl * k, 13, { fill: DIE[0] });
-    pg.text(X(dc), y + 33, 'die ' + dl + ' mm (one piece)', { size: 7, bold: true, color: '#ffffff', align: 'center' });
+    pg.rect(X(dc - dl / 2), y + 28, dl * k, 15, { fill: DIE[0] });
+    pg.text(X(dc), y + 38.5, 'die ' + dl + ' mm (one piece)', { size: 7.5, bold: true, color: '#ffffff', align: 'center' });
     plan.stations.forEach(function (st) {
-      pieceRow(pg, st.tips, st.len, X(st.u0), y + 8, 13, k, PUNCH, false, st.kinds);
-      pg.text(X(st.centre), y + 6, st.name, { size: 8.5, bold: true, color: BRAND, align: 'center' });
+      pieceRow(pg, st.tips, st.len, X(st.u0), y + 10, 15, k, PUNCH, false, st.kinds);
+      pg.text(X(st.centre), y + 7, st.name, { size: 11, bold: true, color: BRAND, align: 'center' });
     });
-    pg.text(x0 - 2, y + 18, 'P', { size: 6.5, color: MUTED, align: 'right' });
-    pg.text(x0 - 2, y + 34, 'D', { size: 6.5, color: MUTED, align: 'right' });
-    y += 72;
+    pg.text(x0 - 3, y + 21, 'P', { size: 7, color: MUTED, align: 'right' });
+    pg.text(x0 - 3, y + 39, 'D', { size: 7, color: MUTED, align: 'right' });
+    return y + 76;
+  }
 
-    /* station details, up to 4 per row */
-    var n = plan.stations.length, per = Math.min(4, Math.max(1, n)), cw = (W - (per - 1) * 12) / per;
+  /* One card per station: what to put in, and where. Returns the y below the cards. */
+  function stationCards(pg, plan, y) {
+    var x0 = 36, W = 770, n = plan.stations.length, per = Math.min(4, Math.max(1, n)), gap = 12, H = 112;
+    var cw = (W - (per - 1) * gap) / per;
     plan.stations.forEach(function (st, i) {
-      var cx = x0 + (i % per) * (cw + 12), cy = y + Math.floor(i / per) * 92;
-      pg.rect(cx, cy, cw, 84, { stroke: GRID, w: 0.6 });
-      pg.text(cx + 8, cy + 14, 'Station ' + st.name, { size: 9.5, bold: true, color: BRAND });
-      pg.text(cx + cw - 8, cy + 14, 'bends ' + st.bends.map(function (k) { return k + 1; }).join(', '), { size: 8, color: MUTED, align: 'right', maxW: cw - 80 });
+      var cx = x0 + (i % per) * (cw + gap), cy = y + Math.floor(i / per) * (H + gap);
+      pg.rect(cx, cy, cw, H, { stroke: st.missing ? CRIT : BRAND, w: 1.2 });
+      pg.rect(cx, cy, cw, 24, { fill: st.missing ? CRIT : BRAND });
+      pg.text(cx + 10, cy + 17, 'Station ' + st.name, { size: 14, bold: true, color: '#ffffff' });
+      pg.text(cx + cw - 10, cy + 16.5, 'bends ' + st.bends.map(function (b) { return b + 1; }).join(', '), { size: 10.5, bold: true, color: '#ffffff', align: 'right', maxW: cw - 110 });
       var kk = (cw - 20) / Math.max(st.width, 1), sx = cx + 10 + (cw - 20 - st.width * kk) / 2;
-      pieceRow(pg, st.tips, st.len, sx, cy + 26, 22, kk, PUNCH, true, st.kinds, st.punch);
-      pg.text(cx + 8, cy + 66, 'Punch ' + (st.punch.length ? st.parts.join(' + ') + ' = ' + st.len : 'MISSING ' + st.len) + ' mm', { size: 7.8, maxW: cw - 16, color: st.missing ? CRIT : INK });
-      pg.text(cx + 8, cy + 78, 'From ' + sgnMm(st.u0) + ' to ' + sgnMm(st.u1) + ' mm (machine centre = 0)', { size: 7.8, maxW: cw - 16, color: MUTED });
+      pieceRow(pg, st.tips, st.len, sx, cy + 32, 26, kk, PUNCH, true, st.kinds, st.punch);
+      pg.text(cx + 10, cy + 76, st.punch.length ? st.parts.join(' + ') + ' = ' + st.len + ' mm' : 'MISSING ' + st.len + ' mm', { size: 11.5, bold: true, maxW: cw - 20, color: st.missing ? CRIT : INK });
+      pg.text(cx + 10, cy + 92, 'Left end ' + sgnMm(st.u0) + '   Right end ' + sgnMm(st.u1) + ' mm', { size: 10, maxW: cw - 20 });
+      pg.text(cx + 10, cy + 105, 'from machine centre  ·  from bed left ' + (st.u0 + BED / 2) + ' - ' + (st.u1 + BED / 2), { size: 7.8, color: MUTED, maxW: cw - 20 });
     });
-    return y + Math.ceil(n / per) * 92;
+    return y + Math.ceil(n / per) * (H + gap) - gap;
+  }
+
+  /* Back side: all pictures on one page, as large as they fit (more pages only for very many bends). */
+  function picturePages(doc, info, pics, page) {
+    var x0 = 36, W = 770, top = 80, Hh = 595 - top - 20, gap = 10, cap = 14, MAX = 12;
+    for (var p0 = 0; p0 < pics.length; p0 += MAX) {
+      var set = pics.slice(p0, p0 + MAX), n = set.length, best = null;
+      for (var c = 1; c <= n; c++) {
+        var rows = Math.ceil(n / c), ar = set[0].h / set[0].w;
+        var w = Math.min((W - (c - 1) * gap) / c, ((Hh - (rows - 1) * gap) / rows - cap) / ar);
+        if (!best || w > best.w) best = { c: c, w: w, h: w * ar };
+      }
+      var pg = doc.page();
+      header(pg, info, '3D view per bend', ++page);
+      var used = best.c * best.w + (best.c - 1) * gap, ox = x0 + (W - used) / 2;
+      set.forEach(function (pic, i) {
+        var px = ox + (i % best.c) * (best.w + gap), py = top + Math.floor(i / best.c) * (best.h + cap + gap);
+        pg.image(doc.jpeg(pic.bytes, pic.w, pic.h), px, py, best.w, best.h);
+        pg.rect(px, py, best.w, best.h, { stroke: GRID, w: 0.6 });
+        pg.text(px, py + best.h + 10, pic.caption, { size: best.w > 300 ? 8.5 : 7.3, bold: true, maxW: best.w });
+      });
+    }
+    return page;
   }
 
   /* info: { program, job, material, thickness, punch, die, source, date, rows: [{ n, angle, dir, flip, len, x, z1, z2, r1, r2 }] }
-     pics: [{ caption, bytes, w, h }] */
+     pics: [{ caption, bytes, w, h }]
+     Page 1 (front): bed, stations, warnings and the bend list. Page 2 (back): the 3D pictures. Made to print double sided. */
   function pdf(plan, info, pics) {
     var doc = new PDF.Doc(true), page = 1;
     var pg = doc.page();
     header(pg, info, 'Tooling setup', page);
-    var y = bedDrawing(pg, plan, 88) + 6;
-    y = table(pg, 36, y, [
-      { t: 'Station', w: 52 }, { t: 'Punch sections, left to right (mm)', w: 290 }, { t: 'Punch', w: 60, align: 'right' },
-      { t: 'Left end', w: 70, align: 'right' }, { t: 'Right end', w: 70, align: 'right' },
-      { t: 'From bed left end', w: 110, align: 'right' }, { t: 'Bends', w: 118 }
-    ], plan.stations.map(function (st) {
-      return [{ t: st.name, bold: true, color: BRAND }, st.punch.length ? st.parts.join(' + ') : { t: 'missing', color: CRIT }, st.len,
-        sgnMm(st.u0), sgnMm(st.u1),
-        (st.u0 + BED / 2) + ' - ' + (st.u1 + BED / 2), st.bends.map(function (k) { return k + 1; }).join(', ')];
-    }));
-    y += 12;
-    var notes = ['Positions are punch ends in mm from the machine centre (- = left). Die: one piece, ' + plan.die.len + ' mm, from ' +
-        sgnMm(plan.die.centre - plan.die.len / 2) + ' to ' + sgnMm(plan.die.centre + plan.die.len / 2) + ' mm.',
-      'All bends use the small V slot at the back of the die. All punch sections must be the same type and height.',
-      'Z1/Z2 in the program are for the part placed at its station as in the bend list.'];
-    plan.warns.forEach(function (w) { notes.push('!' + w); });
-    notes.forEach(function (s) {
-      if (y > 570) { pg = doc.page(); header(pg, info, 'Tooling setup', ++page); y = 88; }
-      var warn = s[0] === '!';
-      pg.text(36, y, (warn ? 'Warning: ' : '') + (warn ? s.slice(1) : s), { size: 8.3, color: warn ? CRIT : MUTED, bold: warn, maxW: 770 });
+    var y = bedDrawing(pg, plan, 88);
+    y = stationCards(pg, plan, y + 4) + 14;
+    plan.warns.forEach(function (w) {
+      pg.text(36, y, 'Warning: ' + w, { size: 9, bold: true, color: CRIT, maxW: 770 });
       y += 12;
     });
+    if (plan.warns.length) y += 4;
 
-    /* bend list */
-    pg = doc.page(); header(pg, info, 'Bend list', ++page);
-    var cols = [{ t: '#', w: 26, align: 'right' }, { t: 'Station', w: 46 }, { t: 'Angle', w: 46, align: 'right' }, { t: 'Dir', w: 54 },
-      { t: 'Bend length', w: 62, align: 'right' }, { t: 'Punch', w: 46, align: 'right' }, { t: 'Gap between flanges', w: 94, align: 'right' },
-      { t: 'Part centre from machine centre', w: 136, align: 'right' }, { t: 'X', w: 50, align: 'right' }, { t: 'Z1', w: 40, align: 'right' },
-      { t: 'Z2', w: 40, align: 'right' }, { t: 'R1 / R2', w: 54, align: 'right' }, { t: 'Notes', w: 116 }];
+    var cols = [{ t: '#', w: 26, align: 'right' }, { t: 'Station', w: 56 }, { t: 'Angle', w: 52, align: 'right' }, { t: 'Dir', w: 58 },
+      { t: 'Bend length', w: 70, align: 'right' }, { t: 'Punch', w: 52, align: 'right' }, { t: 'X', w: 62, align: 'right' },
+      { t: 'Z1', w: 50, align: 'right' }, { t: 'Z2', w: 50, align: 'right' }, { t: 'R1 / R2', w: 62, align: 'right' },
+      { t: 'Part centre', w: 78, align: 'right' }, { t: 'Notes', w: 154 }];
     var rows = info.rows.map(function (r, i) {
       var b = plan.bends[i];
-      var note = (r.flip ? 'FLIP. ' : '') + (b.boxed ? 'Between flanges. ' : '') + (b.warns.length ? 'See warning.' : '');
+      var note = [r.flip ? 'FLIP' : '', b.boxed ? 'gap ' + (b.gap === null ? '-' : b.gap) : '', b.warns.length ? 'see warning' : ''].filter(Boolean).join(' · ');
       return [r.n, { t: b.stationName, bold: true, color: BRAND }, r.angle + '°', r.dir === 'DOWN' ? 'Down' : 'Up', r1(r.len), b.toolLen,
-        b.gap === null ? '-' : b.gap, sgnMm(b.shift) + ' mm', r.x.toFixed(2), r.z1, r.z2, r.r1 + ' / ' + r.r2,
-        { t: note, color: b.warns.length ? CRIT : INK }];
+        { t: r.x.toFixed(2), bold: true }, r.z1, r.z2, r.r1 + ' / ' + r.r2, sgnMm(b.shift) + ' mm',
+        { t: note, color: b.warns.length ? CRIT : r.flip ? CRIT : INK, bold: r.flip }];
     });
-    for (var i = 0; i < rows.length; i += 30) {
-      if (i) { pg = doc.page(); header(pg, info, 'Bend list', ++page); }
-      y = table(pg, 36, 82, cols, rows.slice(i, i + 30));
+    /* rows as tall as the page allows, so a short list is easy to read */
+    var foot = 30, rowH = Math.max(15, Math.min(22, (595 - foot - y - 12) / Math.max(1, rows.length + 1)));
+    var fit = Math.max(1, Math.floor((595 - foot - y) / rowH) - 1);
+    pg.text(36, y + 2, 'Bend list', { size: 11, bold: true });
+    y = table(pg, 36, y + 8, cols, rows.slice(0, fit), { rowH: rowH, size: rowH >= 18 ? 10 : 8.8 });
+    for (var i = fit; i < rows.length; i += 30) {
+      pg = doc.page(); header(pg, info, 'Bend list (continued)', ++page);
+      y = table(pg, 36, 82, cols, rows.slice(i, i + 30), { rowH: 16, size: 8.8 });
     }
     y += 12;
-    pg.text(36, y, 'Gap between flanges: free length for the punch between flanges that are already bent (box bends). Part centre: where the middle of the bend line sits along the machine.', { size: 7.8, color: MUTED, maxW: 770 });
+    pg.text(36, y, 'Positions in mm from the machine centre (- = left). All bends in the small V slot at the back of the die; all punch sections the same type and height.', { size: 7.5, color: MUTED, maxW: 770 });
+    pg.text(36, y + 10, 'Part centre: where the middle of the bend line sits along the machine; Z1/Z2 are for the part placed there. Gap: free length for the punch between flanges that are already bent, mm.', { size: 7.5, color: MUTED, maxW: 770 });
 
-    /* pictures, 2 x 2 per page */
-    for (var p = 0; p < pics.length; p++) {
-      if (p % 4 === 0) { pg = doc.page(); header(pg, info, '3D view per bend', ++page); }
-      var c = p % 4, cw = 378, ih = Math.round(cw * pics[p].h / pics[p].w);
-      var px = 36 + (c % 2) * (cw + 14), py = 80 + Math.floor(c / 2) * (ih + 30);
-      pg.image(doc.jpeg(pics[p].bytes, pics[p].w, pics[p].h), px, py, cw, ih);
-      pg.rect(px, py, cw, ih, { stroke: GRID, w: 0.6 });
-      pg.text(px, py + ih + 13, pics[p].caption, { size: 8.5, bold: true, maxW: cw });
-    }
+    picturePages(doc, info, pics, page);
     return doc.bytes();
   }
 

@@ -67,7 +67,9 @@
         <label class="mini" title="Open a program file saved with Save as file, or restore a backup made with Back up all">Open file
           <input type="file" id="progFileInput" accept=".json,.entalbend" hidden>
         </label>
+        <button class="mini" id="btnBackupDir" type="button" title="Pick a folder (for example on a network drive or OneDrive). Every save then writes a backup of all programs there, one file a day">Auto backup folder</button>
       </div>
+      <p class="muted small" id="autoBackupInfo"></p>
       <div class="tableWrap">
         <table class="plain lib">
           <thead><tr><th>Name</th><th>Bends</th><th></th></tr></thead>
@@ -131,64 +133,70 @@
   </aside>
 </main>
 
-<section class="panel bends">
+<section class="panel bends sim" id="bendWork">
   <div class="rowHead">
-    <h2>Bend sequence</h2>
-    <div class="toolbar">
+    <div class="workTabs">
+      <button class="mini on" type="button" data-work="sim">Bend sequence &amp; simulator</button>
+      <button class="mini" type="button" data-work="tool">Tooling setup</button>
+    </div>
+    <div class="toolbar" id="seqTools">
       <button class="mini" id="btnSuggest" type="button" title="Try bend orders with the collision checks and show the best ones">Suggest bend order</button>
       <button class="mini" id="btnFlatDxf" type="button" hidden title="Save the flat pattern made from the STEP file as a DXF">Save flat DXF</button>
       <button class="mini" id="clearSeq" type="button">Clear selection</button>
+      <button class="mini" id="seqToggle" type="button" title="Hide or show the bend table to give the simulator more room">Hide table</button>
     </div>
   </div>
+  <div id="workSim">
   <div id="seqSuggest" class="suggest"></div>
-  <div class="tableWrap">
-    <table class="seq">
-      <thead>
-        <tr>
-          <th>#</th><th>Bend</th><th>Angle (°)</th><th>Direction</th><th>Length</th>
-          <th title="Which side of the bend line the backgauge measures to">Gauge side</th>
-          <th>To edge</th>
-          <th title="Added to the edge distance. Use it for a second bend on a flange that already has a bend.">Offset</th>
-          <th>Backgauge X</th><th title="Ticked: the fingers are placed on the gauged edge automatically and follow the part. Typing Z1/Z2 or dragging a finger unticks it.">Auto Z</th><th title="Finger positions. Empty uses the default from the USB export panel. Values typed by hand move with the part when its station moves.">Z1</th><th>Z2</th><th title="Backgauge height. Empty uses the default from the USB export panel.">R1</th><th>R2</th><th>Notes</th><th></th>
-        </tr>
-      </thead>
-      <tbody id="seqBody"></tbody>
-    </table>
-  </div>
-  <div class="stepSet" id="stepSettings"></div>
-  <p class="muted small">Up folds the flange toward you as drawn; Down folds it away, so the part is turned over (FLIP). Distances are flat-pattern distances from the bend line to the edge, in mm.</p>
-</section>
-
-<section class="panel sim">
-  <div class="rowHead">
-    <h2>Bend simulator</h2>
-  </div>
   <div class="simStage">
-    <div class="simTabs">
-      <button class="mini on" type="button" data-tab="3d">3D</button>
-      <button class="mini" type="button" data-tab="top">Top view</button>
-      <button class="mini" type="button" id="simReset" title="Reset the 3D camera">Reset view</button>
-      <label class="check" title="Turn the punch around if the drawing orientation is wrong"><input type="checkbox" id="simFlip"> Flip punch</label>
-      <label class="check" id="simZoomWrap" hidden><input type="checkbox" id="simZoom" checked> Zoom to part</label>
+    <div class="seqDock">
+      <div class="tableWrap">
+        <table class="seq">
+          <thead>
+            <tr>
+              <th>#</th><th>Bend</th><th>Angle (°)</th><th>Direction</th><th>Length</th>
+              <th title="Which side of the bend line the backgauge measures to">Gauge side</th>
+              <th>To edge</th>
+              <th title="Added to the edge distance. Use it for a second bend on a flange that already has a bend.">Offset</th>
+              <th>Backgauge X</th><th title="Ticked: the fingers are placed on the gauged edge automatically and follow the part. Typing Z1/Z2 or dragging a finger unticks it.">Auto Z</th><th title="Finger positions. Empty uses the default from the USB export panel. Values typed by hand move with the part when its station moves.">Z1</th><th>Z2</th><th title="Backgauge height. Empty uses the default from the USB export panel.">R1</th><th>R2</th><th>Notes</th><th></th>
+            </tr>
+          </thead>
+          <tbody id="seqBody"></tbody>
+        </table>
+      </div>
     </div>
-    <div id="sim3dWrap" class="sim3d"></div>
-    <div id="simTopWrap" hidden>
-      <canvas id="simTop" class="simCv"></canvas>
-      <canvas id="simSide" class="simCv"></canvas>
-    </div>
-    <div class="simBar toolbar">
-      <button class="mini" id="simPrev" type="button" title="Previous bend">&#9664;</button>
-      <span id="simStepLabel" class="muted">No bend</span>
-      <button class="mini" id="simNext" type="button" title="Next bend">&#9654;</button>
-      <button class="mini" id="simPlay" type="button" title="Bend the part">Bend &#9654;</button>
-      <label class="inline">Progress<input type="range" id="simProg" min="0" max="100" value="0"></label>
-      <button class="mini" id="simAuto" type="button" title="Place the fingers on the gauged edge of the part">Auto fingers</button>
-      <label class="inline">Part shift (mm)<input id="simShift" type="number" step="1" value="0"></label>
+    <div class="simView">
+      <div class="simTabs">
+        <button class="mini on" type="button" data-tab="3d">3D</button>
+        <button class="mini" type="button" data-tab="top">Top view</button>
+        <button class="mini" type="button" id="simReset" title="Reset the 3D camera">Reset view</button>
+        <label class="check" title="Turn the punch around if the drawing orientation is wrong"><input type="checkbox" id="simFlip"> Flip punch</label>
+        <label class="check" id="simZoomWrap" hidden><input type="checkbox" id="simZoom" checked> Zoom to part</label>
+      </div>
+      <details class="stepSet simSet" id="stepSettings" open></details>
+      <div id="sim3dWrap" class="sim3d"></div>
+      <div id="simTopWrap" hidden>
+        <canvas id="simTop" class="simCv"></canvas>
+        <canvas id="simSide" class="simCv"></canvas>
+      </div>
+      <div class="simBar toolbar">
+        <button class="mini" id="simPrev" type="button" title="Previous bend (left arrow)">&#9664;</button>
+        <span id="simStepLabel" class="muted">No bend</span>
+        <button class="mini" id="simNext" type="button" title="Next bend (right arrow)">&#9654;</button>
+        <button class="mini" id="simPlay" type="button" title="Bend the part (space)">Bend &#9654;</button>
+          <button class="mini" id="simPlayAll" type="button" title="Bend the whole part, every bend in order from the first">Whole part &#9654;&#9654;</button>
+        <label class="inline">Progress<input type="range" id="simProg" min="0" max="100" value="0"></label>
+        <button class="mini" id="simAuto" type="button" title="Place the fingers on the gauged edge of the part">Auto fingers</button>
+        <label class="inline">Part shift (mm)<input id="simShift" type="number" step="1" value="0"></label>
+      </div>
     </div>
   </div>
   <div id="simInfo" class="simInfo muted small">Select a bend in the sequence to see the backgauge fingers.</div>
+  <p class="muted small">Up folds the flange toward you as drawn; Down folds it away, so the part is turned over (FLIP). Distances are flat-pattern distances from the bend line to the edge, in mm.</p>
+  <p class="muted small">Z1 moves the left finger to the left of the centre, Z2 the right finger to the right (100 mm wide, Z = finger centre, machine 2500 mm). A finger may go past the centre (negative Z); Z1 + Z2 must stay at least 120. R1/R2 raise each finger's support ledge above the die top. Fingers are placed on the gauged edge automatically when you add a bend; typing in Z1/Z2 stops that, and Auto fingers brings it back. The flat pattern is folded bend by bend (earlier bends are included) and assumes every bend line runs across the whole part. Punch and die are approximate shapes (punch tip 88&deg;, die with V8 and V12 slots, bending in the V8 at the back). In the top view you can drag the Z1/Z2 fingers. Click a row in the bend table to simulate that step.</p>
+  </div>
+  <div id="workTool" hidden>
   <div class="stepSet toolSet">
-    <h3>Tooling setup (stations)</h3>
     <div class="secLib">
       <div class="tableWrap">
         <table class="plain secTable">
@@ -217,7 +225,7 @@
     </div>
     <div id="tlPlan" class="small"></div>
   </div>
-  <p class="muted small">Z1 moves the left finger to the left of the centre, Z2 the right finger to the right (100 mm wide, Z = finger centre, machine 2500 mm). A finger may go past the centre (negative Z); Z1 + Z2 must stay at least 120. R1/R2 raise each finger's support ledge above the die top. Fingers are placed on the gauged edge automatically when you add a bend; typing in Z1/Z2 stops that, and Auto fingers brings it back. The flat pattern is folded bend by bend (earlier bends are included) and assumes every bend line runs across the whole part. Punch and die are approximate shapes (punch tip 88&deg;, die with V8 and V12 slots, bending in the V8 at the back). In the top view you can drag the Z1/Z2 fingers. Click a row in the bend table to simulate that step.</p>
+  </div>
 </section>
 
 <section class="panel" id="usbEdit">
