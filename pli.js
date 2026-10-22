@@ -221,6 +221,26 @@
     return res.sort(function (a, b) { return a.program - b.program; });
   }
 
+  /* Blank the entry of program n (the entry stays where it is, so the other programs keep their numbers and the
+     count does not change). New programs reuse the free entry. Returns a copy of fprog, or null if n is not there. */
+  function removeEntry(fprog, n) {
+    var slot = findSlot(fprog, n);
+    if (!slot || !slot.existing || n === 99) return null;
+    var out = new Uint8Array(fprog), free = null;
+    for (var k = 1; ENT_FIRST + (k - 1) * ENT + ENT <= fprog.length; k++) {
+      var s = ENT_FIRST + (k - 1) * ENT;
+      if (entryProgram(fprog, s) === 0 && view(fprog).getInt16(s + 40, true) === 0 && fprog[s + 30] === 0x53) { free = fprog.subarray(s, s + ENT); break; }
+    }
+    if (free) out.set(free, slot.s);
+    else {
+      var e = new Uint8Array(fprog.subarray(slot.s, slot.s + ENT)), v = view(e);
+      putAscii(e, 4, 9, numberField(0)); putAscii(e, 13, 13, '');
+      v.setInt16(40, 0, true); v.setInt16(66, 0, true);
+      out.set(e, slot.s);
+    }
+    return out;
+  }
+
   /* Move entries that sit after the 99 entry (invisible to the control) in front of it and fix the count.
      Returns the new bytes, or null when nothing needs repair. */
   function repairIndex(fprog) {
@@ -257,5 +277,5 @@
     return new Uint8Array(ENT);
   }
 
-  window.PLI = { repairIndex: repairIndex, parsePli: parsePli, serializePli: serializePli, readEntry: readEntry, putEntry: putEntry, listPrograms: listPrograms, buildPli: buildPli, updateIndex: updateIndex, findSlot: findSlot, listIndex: listIndex, numberField: numberField };
+  window.PLI = { repairIndex: repairIndex, removeEntry: removeEntry, parsePli: parsePli, serializePli: serializePli, readEntry: readEntry, putEntry: putEntry, listPrograms: listPrograms, buildPli: buildPli, updateIndex: updateIndex, findSlot: findSlot, listIndex: listIndex, numberField: numberField };
 })();

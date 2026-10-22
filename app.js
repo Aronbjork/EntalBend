@@ -21,7 +21,7 @@
   };
 
   var SETTINGS_IDS = ['progNo', 'job', 'material', 'thickness', 'punch', 'die', 'defAngle', 'gaugeMin',
-    'outFormat', 'kFactor', 'tlDieLen', 'tlDieC', 'tlClear', 'tlShort', 'tlGap'];
+    'outFormat', 'kFactor', 'tlDieLen', 'tlDieC', 'tlClear', 'tlShort', 'tlGap', 'tlHorn', 'tlHornH'];
   var SETTINGS_CHECKS = ['tlUse', 'tlPics'];
 
   /* ------------------------------------------------------------------ status */
@@ -660,6 +660,7 @@
     var r = rows[i], ax = axisValues(r.e), d = simData(r, ax, segs), A = Sim.analyze(d), bends = simBends(rows);
     return {
       key: meshKey(bends, segs), segs: segs, bends: bends, step: i, progress: progress, shift: d.shift, x: r.xFinal,
+      odc: r.e.set && isFinite(r.e.set.odc) ? r.e.set.odc : SETTING_DEFS.filter(function (s) { return s.k === 'odc'; })[0].def,
       z1: ax.z1, z2: ax.z2, r1: ax.r1, r2: ax.r2, thickness: parseFloat($('thickness').value) || 1, dieV: dieV(),
       flipPunch: $('simFlip').checked, punchLen: /^(835|415|800)$/.test($('punch').value.trim()) ? parseInt($('punch').value, 10) : 0,
       fingerOk: A.fingers.map(function (f) { return f.cover >= 0.4; }), span: partBox().span, tools: d.tools
@@ -767,7 +768,7 @@
     $('btnSuggest').disabled = true;
     setTimeout(function () {
       try {
-        var res = Sequence.suggest({ segs: outlineSegs(), bends: simBends(rows), thickness: parseFloat($('thickness').value) || 1, dieV: dieV(), flipPunch: $('simFlip').checked }, 3);
+        var res = Sequence.suggest({ segs: outlineSegs(), bends: simBends(rows), thickness: parseFloat($('thickness').value) || 1, dieV: dieV(), flipPunch: $('simFlip').checked, horn: hornInfo() }, 3);
         state.suggestions = res.map(function (s) {
           return {
             ids: s.order.map(function (i) { return rows[i].e.id; }), flips: s.flips, turns: s.turns, boxed: s.boxed,
@@ -836,6 +837,10 @@
       if (old) punchLib = Tooling.parseStock(old).list.map(function (s) { return { len: s.len, qty: s.qty, note: '' }; });
     } catch (e) { /* storage not available */ }
     if (!Array.isArray(punchLib)) punchLib = [];
+    /* earlier versions kept "horn left" / "horn right" in the note */
+    punchLib.forEach(function (s) {
+      if (s.horn === undefined) s.horn = /horn\s*(l|v)/i.test(s.note || '') ? 'L' : /horn\s*(r|h)/i.test(s.note || '') ? 'R' : '';
+    });
   }
 
   function saveLib() {
@@ -847,12 +852,14 @@
   function renderLib() {
     var body = $('tlLib');
     if (!punchLib.length) {
-      body.innerHTML = '<tr><td colspan="5" class="empty">No sections yet. Use Add section for each length you have.</td></tr>';
+      body.innerHTML = '<tr><td colspan="6" class="empty">No sections yet. Use Add section for each length you have.</td></tr>';
     } else {
       body.innerHTML = punchLib.map(function (s, i) {
         return '<tr data-i="' + i + '"><td><input type="number" data-f="len" min="1" step="1" value="' + (s.len || '') + '"></td>' +
           '<td><input type="number" data-f="qty" min="0" step="1" value="' + (s.qty === undefined ? '' : s.qty) + '"></td>' +
-          '<td><input data-f="note" maxlength="40" placeholder="e.g. horn left" value="' + esc(s.note || '') + '"></td>' +
+          '<td><select data-f="horn"><option value=""' + (s.horn ? '' : ' selected') + '>Normal</option><option value="L"' + (s.horn === 'L' ? ' selected' : '') +
+            '>Horn left</option><option value="R"' + (s.horn === 'R' ? ' selected' : '') + '>Horn right</option></select></td>' +
+          '<td><input data-f="note" maxlength="40" placeholder="e.g. reference" value="' + esc(s.note || '') + '"></td>' +
           '<td class="used" data-used></td>' +
           '<td class="acts"><button class="mini" type="button" data-act="del" title="Remove">✕</button></td></tr>';
       }).join('');
@@ -870,15 +877,23 @@
   /* "In use" column: pieces of each length that the current station plan takes. */
   function libUsage() {
     var used = {}, p = state.plan;
-    if (p) p.stations.forEach(function (st) { st.punch.forEach(function (L) { used[L] = (used[L] || 0) + 1; }); });
+    if (p) p.stations.forEach(function (st) { st.punch.forEach(function (L, i) { var k = (st.kinds[i] || '') + L; used[k] = (used[k] || 0) + 1; }); });
     var left = {};
     Object.keys(used).forEach(function (k) { left[k] = used[k]; });
     Array.prototype.forEach.call($('tlLib').querySelectorAll('tr[data-i]'), function (tr) {
-      var s = punchLib[+tr.dataset.i], L = Math.round(+s.len || 0), cell = tr.querySelector('[data-used]');
+      var s = punchLib[+tr.dataset.i], L = (s.horn || '') + Math.round(+s.len || 0), cell = tr.querySelector('[data-used]');
       var u = Math.min(left[L] || 0, Math.max(0, Math.floor(+s.qty || 0)));
       left[L] = (left[L] || 0) - u;
       cell.textContent = p ? u + ' of ' + Math.max(0, Math.floor(+s.qty || 0)) : '';
     });
+  }
+
+  /* Horn pieces in the library, for the order suggestions: which sides there is one for, and the horn settings. */
+  function hornInfo() {
+    var h = { L: false, R: false, ext: parseFloat($('tlHorn').value) || 0, h: parseFloat($('tlHornH').value), short: parseFloat($('tlShort').value) || 0 };
+    if (!isFinite(h.h)) h.h = 20;
+    punchLib.forEach(function (s) { if (s.horn && +s.len > 0 && Math.floor(+s.qty || 0) > 0) h[s.horn] = true; });
+    return h;
   }
 
   /* The station plan for these rows (cached), or null. force: plan even when stations are not in use. */
@@ -890,10 +905,10 @@
       key: meshKey(bends, segs), segs: segs, bends: bends, thickness: parseFloat($('thickness').value) || 1, dieV: dieV(),
       flipPunch: $('simFlip').checked, punchStock: punchLib, die: { len: parseFloat($('tlDieLen').value) || 0, centre: parseFloat($('tlDieC').value) || 0 },
       clear: parseFloat($('tlClear').value) || 0, short: parseFloat($('tlShort').value) || 0, gap: parseFloat($('tlGap').value) || 0,
-      moves: state.stationMoves
+      hornExt: parseFloat($('tlHorn').value) || 0, hornH: parseFloat($('tlHornH').value), moves: state.stationMoves
     };
     var key = JSON.stringify([inp.key, bends.map(function (b) { return [b.angle, b.dir, b.sign]; }), inp.thickness, inp.dieV, inp.flipPunch,
-      inp.punchStock.map(function (s) { return [s.len, s.qty]; }), inp.die, inp.clear, inp.short, inp.gap, inp.moves]);
+      inp.punchStock.map(function (s) { return [s.len, s.qty, s.horn || '']; }), inp.die, inp.clear, inp.short, inp.gap, inp.hornExt, inp.hornH, inp.moves]);
     if (planCache.key !== key) {
       try { planCache = { key: key, plan: Tooling.plan(inp) }; }
       catch (err) { planCache = { key: key, plan: null }; setStatus('Tooling plan failed: ' + err.message, true); }
@@ -945,7 +960,7 @@
     box.innerHTML = '<div class="tableWrap"><table class="plain stnTable"><thead><tr><th>Station</th><th>Punch sections, left to right</th>' +
       '<th>Position from centre</th><th title="Move the station from where the plan puts it. + = right, - = left. Shift+click the arrows for 1 mm.">Move (mm)</th><th>Bends</th></tr></thead><tbody>' +
       p.stations.map(function (st) {
-        return '<tr data-stn="' + st.name + '"><td><b>' + st.name + '</b></td><td>' + (st.punch.length ? st.punch.join(' + ') + ' = ' + st.len : '<span class="bad">missing ' + st.len + '</span>') + '</td>' +
+        return '<tr data-stn="' + st.name + '"><td><b>' + st.name + '</b></td><td>' + (st.punch.length ? st.parts.join(' + ') + ' = ' + st.len : '<span class="bad">missing ' + st.len + '</span>') + '</td>' +
           '<td>' + st.u0 + ' to ' + st.u1 + ' mm</td>' +
           '<td class="move"><button class="mini" type="button" data-nudge="-10" title="Left 10 mm">\u25C0</button>' +
           '<input type="number" step="5" data-move value="' + st.move + '">' +
@@ -1232,10 +1247,36 @@
     setStatus('Saved "' + name + '" as a file.');
   }
 
+  /* One file with everything kept in this browser: all saved programs, the settings and the punch library. */
+  function backupAll() {
+    saveSettings();
+    dbCall('readonly', function (s) { return s.getAll(); }).then(function (list) {
+      var o = { format: 'entalbend-backup', version: 1, savedAt: new Date().toISOString(), programs: list, settings: null, punchLib: punchLib };
+      try { o.settings = JSON.parse(localStorage.getItem('entalbend.settings') || 'null'); } catch (e) { /* none */ }
+      download('entalbend-backup-' + new Date().toISOString().slice(0, 10) + '.json', JSON.stringify(o), 'application/json');
+      setStatus('Backed up ' + list.length + ' program' + (list.length === 1 ? '' : 's') + ', the settings and ' + punchLib.length + ' punch section' + (punchLib.length === 1 ? '' : 's') + '.');
+    }).catch(function (err) { setStatus('Could not back up: ' + err.message, true); });
+  }
+
+  function restoreAll(p) {
+    var progs = Array.isArray(p.programs) ? p.programs.filter(function (q) { return q && q.format === 'entalbend-program' && q.name; }) : [];
+    if (!window.confirm('Restore the backup from ' + (p.savedAt ? new Date(p.savedAt).toLocaleString() : 'an unknown date') + '?\n' + progs.length +
+        ' program(s) will be added (programs with the same name are replaced), and the settings and punch library are replaced.')) return;
+    dbCall('readwrite', function (s) { progs.forEach(function (q) { s.put(q); }); }).then(function () {
+      try {
+        if (p.settings) localStorage.setItem('entalbend.settings', JSON.stringify(p.settings));
+        if (Array.isArray(p.punchLib)) { punchLib = p.punchLib; saveLib(); }
+      } catch (e) { /* storage not available */ }
+      loadSettings(); sortLib(); renderLib(); renderLibrary();
+      setStatus('Restored ' + progs.length + ' program' + (progs.length === 1 ? '' : 's') + ', the settings and the punch library.');
+    }).catch(function (err) { setStatus('Could not restore: ' + err.message, true); });
+  }
+
   function importProgram(text, fileName) {
     var p;
     try { p = JSON.parse(text); }
     catch (e) { setStatus('Could not read ' + fileName + ': it is not an EntalBend program file.', true); return; }
+    if (p && p.format === 'entalbend-backup') { restoreAll(p); return; }
     if (!confirmReplace()) return;
     try { applyProgram(p); }
     catch (err) { setStatus(err.message, true); return; }
@@ -1296,6 +1337,7 @@
 
     $('btnSaveProg').addEventListener('click', saveProgram);
     $('btnExportProg').addEventListener('click', exportProgram);
+    $('btnBackupAll').addEventListener('click', backupAll);
     $('progFileInput').addEventListener('change', function (ev) { loadFile(ev.target.files[0]); ev.target.value = ''; });
     $('progName').addEventListener('keydown', function (ev) { if (ev.key === 'Enter') saveProgram(); });
     $('libBody').addEventListener('click', function (ev) {
@@ -1403,6 +1445,7 @@
       if (!e.set) e.set = {};
       var v = ev.target.value;
       if (v === '' || (k !== 'aux' && !isFinite(parseFloat(v)))) delete e.set[k]; else e.set[k] = k === 'aux' ? v : parseFloat(v);
+      if (k === 'odc') drawSim();
     });
     $('stepSettings').addEventListener('click', function (ev) {
       var e = state.seq[state.simStep];
@@ -1431,12 +1474,12 @@
       });
     });
     ['simZoom', 'simFlip', 'simShift', 'usbZ', 'usbR', 'thickness', 'die', 'punch', 'gaugeMin'].forEach(function (id) { $(id).addEventListener('input', function () { renderTable(); }); });
-    ['tlDieLen', 'tlDieC', 'tlClear', 'tlShort', 'tlGap', 'tlUse'].forEach(function (id) { $(id).addEventListener('change', function () { saveSettings(); renderTable(); }); });
+    ['tlDieLen', 'tlDieC', 'tlClear', 'tlShort', 'tlGap', 'tlHorn', 'tlHornH', 'tlUse'].forEach(function (id) { $(id).addEventListener('change', function () { saveSettings(); renderTable(); }); });
     $('tlLib').addEventListener('input', function (ev) {
       var t = ev.target, tr = t.closest('tr[data-i]');
       if (!tr || !t.dataset.f) return;
       var s = punchLib[+tr.dataset.i];
-      s[t.dataset.f] = t.dataset.f === 'note' ? t.value : (t.value === '' ? '' : parseFloat(t.value));
+      s[t.dataset.f] = t.dataset.f === 'note' || t.dataset.f === 'horn' ? t.value : (t.value === '' ? '' : parseFloat(t.value));
       saveLib(); libSummary();
     });
     $('tlLib').addEventListener('change', function (ev) {
@@ -1450,7 +1493,7 @@
       saveLib(); renderLib(); renderTable();
     });
     $('tlAdd').addEventListener('click', function () {
-      punchLib.push({ len: '', qty: 1, note: '' });
+      punchLib.push({ len: '', qty: 1, horn: '', note: '' });
       saveLib(); renderLib();
       var inp = $('tlLib').querySelector('tr[data-i="' + (punchLib.length - 1) + '"] input[data-f="len"]');
       if (inp) inp.focus();

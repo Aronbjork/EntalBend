@@ -18,6 +18,7 @@
      problems: [{ step, bend, notes }] }] */
   function suggest(inp, count) {
     var n = inp.bends.length, memo = {};
+    var maxLen = Math.max.apply(null, inp.bends.map(function (b) { return b.len; })) || 1;
     var key = 'suggest|' + inp.bends.map(function (b) { return b.id + ':' + b.p1 + ':' + b.p2; }).sort().join('|') + '#' + inp.segs.length;
 
     /* bend j next with gauge side sign, after the bends in prefix (only which bends are done matters for the shape;
@@ -33,10 +34,17 @@
         dieV: inp.dieV, flipPunch: inp.flipPunch, spacing: 8, progress: [0.5, 1]
       }, prefix.length);
       var c = sign === b.sign ? 0 : 0.2, notes = [];
-      if (a.hitPunch) { c += 1000; notes.push('hits the punch'); }
+      if (a.hitPunch) {
+        /* inbent flanges in the way: a horn piece (if there is one for that side) can clear them */
+        var hn = inp.horn ? Tooling.hornNeed(a, b.len, inp.horn.short, inp.horn.ext, inp.horn.h) : null;
+        if (hn && hn.ok && (!hn.needL || inp.horn.L) && (!hn.needR || inp.horn.R)) { c += 2; notes.push('needs a horn piece'); }
+        else { c += 1000; notes.push('hits the punch'); }
+      }
       if (a.hitDie || isFinite(a.da) || isFinite(a.db)) { c += 1000; notes.push('hits the die'); }
       if (a.tooHigh) { c += 300; notes.push('a flange reaches the punch holder'); }
       if (a.tooLow) { c += 300; notes.push('a flange hangs below the die'); }
+      /* tie-break between orders that are equally fine: long bends first, short ones (corner flanges) last */
+      c += 0.1 * (1 - b.len / maxLen) * (n - prefix.length);
       var boxed = isFinite(a.pa) && isFinite(a.pb);
       if (boxed && a.pb - a.pa < b.len - 10) { c += 500; notes.push('no punch fits between the flanges'); }
       else if (boxed) c += 1;                         // needs a short (sectioned) punch

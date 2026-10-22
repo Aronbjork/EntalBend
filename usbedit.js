@@ -79,7 +79,7 @@
       rows.map(function (r) {
         var has = !!U.files[r.program];
         return '<tr><td class="num">' + r.program + '</td><td>' + esc(r.ref) + '</td><td class="num">' + (r.count - 1) + '</td><td>' +
-          (has && r.program <= 98 ? '<button class="mini" type="button" data-edit="' + r.program + '">Edit</button>' + (r.hidden ? ' <span class="bad small">not visible to the control</span>' : '') : '<span class="muted small">' + (has ? 'system' : 'no file') + '</span>') + '</td></tr>';
+          (has && r.program <= 98 ? '<button class="mini" type="button" data-edit="' + r.program + '">Edit</button> <button class="mini" type="button" data-delprog="' + r.program + '">Delete</button>' + (r.hidden ? ' <span class="bad small">not visible to the control</span>' : '') : '<span class="muted small">' + (has ? 'system' : 'no file') + '</span>') + '</td></tr>';
       }).join('') + '</tbody></table>' : '<p class="muted small">No programs found in FPROG.DAT.</p>';
   }
 
@@ -150,6 +150,28 @@
   }
 
 
+  async function removeProgram(n) {
+    try {
+      var entry = PLI.readEntry(U.fprog, n);
+      if (!entry) { status('Program ' + n + ' was not found in FPROG.DAT.', true); return; }
+      if (!window.confirm('Delete program ' + n + (entry.ref ? ' (' + entry.ref + ')' : '') + ' from the stick? The index entry is left blank.')) return;
+      var fixed = PLI.removeEntry(U.fprog, n);
+      if (!fixed) { status('Program ' + n + ' cannot be deleted.', true); return; }
+      if (U.dir) {
+        await write(U.dir, 'FPROG.BAK', U.fprog);
+        await write(U.dir, 'FPROG.DAT', fixed);
+        var gone = true;
+        try { await U.dir.removeEntry(n + '.PLI'); } catch (e) { gone = e && e.name === 'NotFoundError'; }
+        status('Program ' + n + ' deleted' + (gone ? '' : ' from the index, but ' + n + '.PLI could not be removed - delete it by hand') + ' (old index kept as FPROG.BAK).', !gone);
+      } else {
+        dl('FPROG.DAT', fixed);
+        status('Program ' + n + ' removed from the index. Copy the new FPROG.DAT onto the stick and delete ' + n + '.PLI there.');
+      }
+      delete U.files[n]; if (U.src === n) { U.src = null; $('usbEditor').hidden = true; }
+      setFprog(fixed);
+    } catch (err) { status('Could not delete: ' + (err.message || err), true); }
+  }
+
   async function repair() {
     try {
       var fixed = PLI.repairIndex(U.fprog);
@@ -170,6 +192,8 @@
     $('usbProgList').addEventListener('click', function (ev) {
       var b = ev.target.closest('button[data-edit]');
       if (b) edit(parseInt(b.dataset.edit, 10));
+      var d = ev.target.closest('button[data-delprog]');
+      if (d) removeProgram(parseInt(d.dataset.delprog, 10));
     });
     $('usbEdTable').addEventListener('input', function (ev) {
       var t = ev.target, tr = t.closest('tr[data-i]');

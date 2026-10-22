@@ -6,7 +6,7 @@
   'use strict';
 
   var S = null;           // renderer state
-  var meshKey = null, tris = null;
+  var meshKey = null, tris = null, topo = null, topoKey = null;
   var DIE_H = 48, DIE_W = 60, TABLE_W = 2500;
 
   function V3(x, y, z) { return new THREE.Vector3(x, y, z); }
@@ -93,6 +93,130 @@
     return list.map(function (t) { return { v: t, c: [(t[0][0] + t[1][0] + t[2][0]) / 3, (t[0][1] + t[1][1] + t[2][1]) / 3] }; });
   }
 
+  /* Which triangles move with each bend. Triangles that share an edge are one rigid panel, unless the edge lies on a
+     bend line: that edge is a bend joining two panels. A bend then moves the panels reached from its far side without
+     crossing that bend, so a flange that merely lies on the far side of the bend line but is joined to the part by
+     another bend (or not past this bend's reach) stays where it is. Returns { panel, moving: [Set|null per bend],
+     joins: [panel list per bend] }. A null set means no joining edges were found (the old half-plane rule is used). */
+  function buildTopo(list, bends) {
+    var key = function (p) { return Math.round(p[0] * 1000) + ',' + Math.round(p[1] * 1000); };
+    var edges = {}, n = list.length;
+    list.forEach(function (t, i) {
+      var v = t.v;
+      if (Math.abs((v[1][0] - v[0][0]) * (v[2][1] - v[0][1]) - (v[2][0] - v[0][0]) * (v[1][1] - v[0][1])) < 1e-9) return;   // flat sliver from the cuts
+      for (var e = 0; e < 3; e++) {
+        var p = t.v[e], q = t.v[(e + 1) % 3], a = key(p), b = key(q), k = a < b ? a + '|' + b : b + '|' + a;
+        (edges[k] = edges[k] || []).push({ i: i, p: p, q: q });
+      }
+    });
+    var uf = []; for (var i = 0; i < n; i++) uf.push(i);
+    var find = function (x) { while (uf[x] !== x) { uf[x] = uf[uf[x]]; x = uf[x]; } return x; };
+    var joins = [];
+    var bendOf = function (p, q) {
+      var mx = (p[0] + q[0]) / 2, my = (p[1] + q[1]) / 2, best = -1, bd = Infinity;
+      bends.forEach(function (b, j) {
+        var dx = b.p2[0] - b.p1[0], dy = b.p2[1] - b.p1[1], L = Math.hypot(dx, dy) || 1;
+        var dist = function (x, y) { return Math.abs((x - b.p1[0]) * dy - (y - b.p1[1]) * dx) / L; };
+        if (dist(p[0], p[1]) > 0.05 || dist(q[0], q[1]) > 0.05) return;     // the edge is not along this bend line
+        var t = ((mx - b.p1[0]) * dx + (my - b.p1[1]) * dy) / L;
+        var off = t < 0 ? -t : t > L ? t - L : 0;
+        if (off < bd) { bd = off; best = j; }
+      });
+      return bd <= 0.3 ? best : -1;                 // material further along the line than the bend reaches is not this bend
+    };
+    var cross = [];
+    var pair = function (i1, i2, p, q) {
+      var j = bendOf(p, q);
+      if (j < 0) uf[find(i1)] = find(i2);
+      else cross.push([j, i1, i2]);
+    };
+    var lone = [];
+    for (var k in edges) {
+      var es = edges[k];
+      if (es.length === 1) { lone.push(es[0]); continue; }
+      /* more than two triangles on one edge (thin slivers from the cuts): sort them by side of the edge */
+      var sideL = [], sideR = [], ex = es[0].q[0] - es[0].p[0], ey = es[0].q[1] - es[0].p[1];
+      es.forEach(function (e) {
+        var c = list[e.i].c;
+        ((ex * (c[1] - es[0].p[1]) - ey * (c[0] - es[0].p[0])) >= 0 ? sideL : sideR).push(e);
+      });
+      [sideL, sideR].forEach(function (g) { for (var x = 1; x < g.length; x++) uf[find(g[x].i)] = find(g[0].i); });
+      if (sideL.length && sideR.length) pair(sideL[0].i, sideR[0].i, es[0].p, es[0].q);
+    }
+    /* Edges that meet along part of their length (a corner of one triangle sits on the side of another): the outline
+       edges stay alone, the rest are matched over the stretch they share. */
+    lone.forEach(function (a) {
+      var dx = a.q[0] - a.p[0], dy = a.q[1] - a.p[1], L = Math.hypot(dx, dy);
+      if (L < 1e-6) return;
+      lone.forEach(function (b) {
+        if (b === a || b.i === a.i || b.i < a.i) return;
+        var d1 = Math.abs((b.p[0] - a.p[0]) * dy - (b.p[1] - a.p[1]) * dx) / L, d2 = Math.abs((b.q[0] - a.p[0]) * dy - (b.q[1] - a.p[1]) * dx) / L;
+        if (d1 > 1e-3 || d2 > 1e-3) return;
+        var t1 = ((b.p[0] - a.p[0]) * dx + (b.p[1] - a.p[1]) * dy) / L, t2 = ((b.q[0] - a.p[0]) * dx + (b.q[1] - a.p[1]) * dy) / L;
+        var lo = Math.max(0, Math.min(t1, t2)), hi = Math.min(L, Math.max(t1, t2));
+        if (hi - lo < 1e-2) return;
+        pair(a.i, b.i, [a.p[0] + dx / L * lo, a.p[1] + dy / L * lo], [a.p[0] + dx / L * hi, a.p[1] + dy / L * hi]);
+      });
+    });
+    /* Slivers (a fraction of a mm2, left where a cut passes through a corner) belong to no flange of their own: they
+       go with the biggest panel they touch, so they cannot join two sides of a bend. */
+    var area = {};
+    list.forEach(function (t, i) {
+      var v = t.v, r = find(i);
+      area[r] = (area[r] || 0) + Math.abs((v[1][0] - v[0][0]) * (v[2][1] - v[0][1]) - (v[2][0] - v[0][0]) * (v[1][1] - v[0][1])) / 2;
+    });
+    for (var pass = 0; pass < 3; pass++) {
+      var changed = false;
+      cross.forEach(function (c) {
+        var a = find(c[1]), b = find(c[2]);
+        if (a === b) return;
+        if (area[a] < 1 && area[b] >= 1) { uf[a] = b; area[b] += area[a]; changed = true; }
+        else if (area[b] < 1 && area[a] >= 1) { uf[b] = a; area[a] += area[b]; changed = true; }
+      });
+      if (!changed) break;
+    }
+    var panel = list.map(function (t, i) { return find(i); });
+    bends.forEach(function () { joins.push([]); });
+    var adj = {};
+    cross.forEach(function (c) {
+      var a = panel[c[1]], b = panel[c[2]];
+      if (a === b) return;
+      joins[c[0]].push(a, b);
+      (adj[a] = adj[a] || []).push([b, c[0]]); (adj[b] = adj[b] || []).push([a, c[0]]);
+    });
+    var moving = bends.map(function (b, j) {
+      if (!joins[j].length) return null;
+      var dx = b.p2[0] - b.p1[0], dy = b.p2[1] - b.p1[1], L = Math.hypot(dx, dy) || 1;
+      var fn = [-dy * b.sign / L, dx * b.sign / L], mid = [(b.p1[0] + b.p2[0]) / 2, (b.p1[1] + b.p2[1]) / 2];
+      var far = {}, near = {}, seen = {}, queue = [];
+      var side = function (i) { return (list[i].c[0] - mid[0]) * fn[0] + (list[i].c[1] - mid[1]) * fn[1]; };
+      /* which of two joined panels is on the far side: the vote of all their edges on this bend, weighted by how far
+         apart the two triangles' centres are (thin slivers on the line say nothing) */
+      var votes = {};
+      cross.forEach(function (c) {
+        var a = panel[c[1]], b = panel[c[2]];
+        if (c[0] !== j || a === b) return;
+        var k = a < b ? a + '|' + b : b + '|' + a, w = side(c[2]) - side(c[1]);     // > 0: c[1] is on the far side
+        votes[k] = (votes[k] || 0) + (a < b ? w : -w);
+      });
+      Object.keys(votes).forEach(function (k) {
+        var ab = k.split('|');
+        far[votes[k] >= 0 ? ab[0] : ab[1]] = true; near[votes[k] >= 0 ? ab[1] : ab[0]] = true;
+      });
+      Object.keys(far).forEach(function (p) { seen[p] = true; queue.push(+p); });
+      while (queue.length) {
+        var p = queue.pop();
+        (adj[p] || []).forEach(function (e) {
+          if (e[1] === j || seen[e[0]]) return;
+          seen[e[0]] = true; queue.push(e[0]);
+        });
+      }
+      /* the near side must not be reachable from the far side (a tab around the end of the bend): old rule then */
+      return Object.keys(near).some(function (p) { return seen[p]; }) ? null : seen;
+    });
+    return { panel: panel, moving: moving, joins: joins };
+  }
+
   /* ---------------------------------------------------------------- folding */
 
   function fold(bends, step, progress) {
@@ -122,12 +246,15 @@
       var phi = s * th * (K.b.dir === 'DOWN' ? -1 : 1);
       var q = new THREE.Quaternion().setFromAxisAngle(axis, phi), o = K.a.clone();
       var moves = function (c) { return (c[0] - K.mid[0]) * K.fn[0] + (c[1] - K.mid[1]) * K.fn[1] < 0; };
-      T.forEach(function (t) {
-        if (!moves(t.c)) return;
+      var set = topo && topo.moving[k];
+      T.forEach(function (t, i) {
+        if (!(set ? set[topo.panel[i]] : moves(t.c))) return;
         t.p.forEach(function (p) { p.sub(o).applyQuaternion(q).add(o); });
       });
       B.forEach(function (J, j) {
-        if (j === k || !moves(J.mid)) return;
+        if (j === k) return;
+        if (set && topo.joins[j].length) { if (!topo.joins[j].some(function (p) { return set[p]; })) return; }
+        else if (!moves(J.mid)) return;
         J.a.sub(o).applyQuaternion(q).add(o); J.e.sub(o).applyQuaternion(q).add(o);
         J.n.applyQuaternion(q); J.g.applyQuaternion(q);
       });
@@ -249,11 +376,24 @@
   var P814 = [[0, 0], [1.05, 0.7], [1.05, 15.2], [3.3, 15.2], [3.3, 91.2], [7.7, 95], [7.7, 119.3], [6.9, 120],
     [-7.7, 120], [-7.7, 149.3], [-6.9, 150], [-20.7, 150], [-21.5, 149.3], [-21.5, 137], [-18.2, 136.6], [-18.2, 128.2],
     [-21.5, 127.8], [-21.5, 111.8], [-2.9, 91.2], [-2.9, 9.5], [-0.8, 0.75]];
+  /* Part of a profile (list of [x, height]) below or above a height (Sutherland-Hodgman). */
+  function clipProfile(poly, h, below) {
+    var inside = function (p) { return below ? p[1] <= h : p[1] >= h; }, out = [];
+    for (var i = 0; i < poly.length; i++) {
+      var p = poly[i], q = poly[(i + 1) % poly.length], pi = inside(p), qi = inside(q);
+      if (pi) out.push(p);
+      if (pi !== qi) out.push([p[0] + (h - p[1]) / (q[1] - p[1]) * (q[0] - p[0]), h]);
+    }
+    return out;
+  }
+
   function punchProfile(tip, sgn) { return P814.map(function (p) { return [sgn * p[0], tip + p[1]]; }); }
 
   /* Fold the part for one step and place it on the machine. mapP maps a folded point to screen axes. */
   function pose(d) {
-    if (meshKey !== d.key) { tris = buildTris(d.segs, d.bends); meshKey = d.key; }
+    if (meshKey !== d.key) { tris = buildTris(d.segs, d.bends); meshKey = d.key; topoKey = null; }
+    var tk = d.bends.map(function (b) { return b.sign; }).join();     // which side moves depends on the side of each bend
+    if (topoKey !== tk) { topo = buildTopo(tris, d.bends); topoKey = tk; }
     var th = Math.max(0.5, d.thickness || 1);
     var F = fold(d.bends, d.step, d.progress);
     var fr = F.frame, psi = F.theta / 2, cp = Math.cos(psi), sp = Math.sin(psi), sh = d.shift || 0;
@@ -262,7 +402,8 @@
       var x = q.dot(fr.u) + sh, y = q.dot(fr.z), z = -q.dot(fr.v);
       return V3(x, y * cp - z * sp, y * sp + z * cp);
     };
-    var lift = (1 - Math.min(1, d.progress)) * 25;
+    /* the punch starts O.D.C mm above the sheet and comes down to it as the bend progresses (25 when not given) */
+    var lift = (1 - Math.min(1, d.progress)) * (isFinite(d.odc) ? Math.max(0, d.odc) : 25);
     return { F: F, mapP: mapP, th: th, dieTop: -th / 2, tip: th / 2 + lift };
   }
 
@@ -371,9 +512,17 @@
     var punchLen = Math.min(TABLE_W, d.punchLen || Ld);
     var punchMat = mat(0xb9c2cc, { roughness: 0.35, metalness: 0.7, transparent: true, opacity: 0.7 });
     var punchProf = punchProfile(tip, sgn);
+    var hornMat = mat(0xd9a441, { roughness: 0.35, metalness: 0.5, transparent: true, opacity: 0.85 });
+    var hornTipMat = mat(0xe8742a, { roughness: 0.35, metalness: 0.5, transparent: true, opacity: 0.9 });
     (tl ? tl.punch : [[-punchLen / 2, punchLen / 2]]).forEach(function (t) {
       var gap = tl ? 0.6 : 0;
-      G.add(new THREE.Mesh(prism(punchProf, t[1] - t[0] - gap, (t[0] + t[1]) / 2), punchMat));
+      if (!t[2]) { G.add(new THREE.Mesh(prism(punchProf, t[1] - t[0] - gap, (t[0] + t[1]) / 2), punchMat)); return; }
+      /* horn piece: the tip runs the whole length, the body above hornH stops `ext` mm short at the horn end */
+      var ext = Math.min(tl.hornExt || 0, t[1] - t[0]), hh = tip + (isFinite(tl.hornH) ? tl.hornH : 20);
+      var body = t[2] === 'L' ? [t[0] + ext, t[1]] : [t[0], t[1] - ext];
+      var low = clipProfile(punchProf, hh, true), high = clipProfile(punchProf, hh, false);
+      if (low.length > 2) G.add(new THREE.Mesh(prism(low, t[1] - t[0] - gap, (t[0] + t[1]) / 2), hornTipMat));
+      if (high.length > 2 && body[1] - body[0] > 0.7) G.add(new THREE.Mesh(prism(high, body[1] - body[0] - gap, (body[0] + body[1]) / 2), hornMat));
     });
     var beamY = tip + 150 + 45, beam = new THREE.Group();
     if (!d.hideBeam) G.add(beam);
@@ -433,6 +582,9 @@
     return url;
   }
 
-  window.Sim3D = { sample: sample, snapshot: snapshot, punchProfile: punchProfile, dieProfile: dieProfile, DIE_BACK: DIE_BACK, DIE_H: DIE_H, DIE_V: DIE_V,
-    camera: function (x, y, z) { if (S) { S.camera.position.set(x, y, z); S.controls.update(); render(); } }, update: update, resetView: resetView, resize: resize, isReady: function () { return !!S; }, canvas: function () { return S && S.renderer.domElement; } };
+  /* For checks: the rigid panels and which of them each bend moves. */
+  function topology(segs, bends) { var l = buildTris(segs, bends); return { tris: l, topo: buildTopo(l, bends) }; }
+
+  window.Sim3D = { topology: topology, sample: sample, snapshot: snapshot, punchProfile: punchProfile, dieProfile: dieProfile, DIE_BACK: DIE_BACK, DIE_H: DIE_H, DIE_V: DIE_V,
+    camera: function (x, y, z, tx, ty, tz) { if (S) { S.camera.position.set(x, y, z); if (tx !== undefined) S.controls.target.set(tx, ty, tz); S.controls.update(); render(); } }, update: update, resetView: resetView, resize: resize, isReady: function () { return !!S; }, canvas: function () { return S && S.renderer.domElement; } };
 })();

@@ -14,7 +14,7 @@
   function parseStock(text) {
     var out = [], bad = [];
     if (Array.isArray(text)) {
-      text.forEach(function (s) { if (+s.len > 0 && +s.qty > 0) out.push({ len: Math.round(+s.len), qty: Math.floor(+s.qty) }); });
+      text.forEach(function (s) { if (+s.len > 0 && +s.qty > 0) out.push({ len: Math.round(+s.len), qty: Math.floor(+s.qty), horn: s.horn === 'L' || s.horn === 'R' ? s.horn : '' }); });
       out.sort(function (a, b) { return b.len - a.len; });
       return { list: out, bad: bad };
     }
@@ -30,15 +30,24 @@
 
   function stockCounts(list) {
     var c = {};
-    list.forEach(function (s) { c[s.len] = (c[s.len] || 0) + s.qty; });
+    list.forEach(function (s) { if (!s.horn) c[s.len] = (c[s.len] || 0) + s.qty; });
     return c;
+  }
+
+  /* Horn pieces on the shelf: { L: { len: qty }, R: { len: qty } }. A horn piece is as long as its length says; the last
+     `ext` mm of it, at the end it points to, is the horn (no body above the tip there). A left horn goes at the left end of
+     a station, a right horn at the right end. */
+  function hornCounts(list) {
+    var h = { L: {}, R: {} };
+    list.forEach(function (s) { if (s.horn) h[s.horn][s.len] = (h[s.horn][s.len] || 0) + s.qty; });
+    return h;
   }
 
   /* Pick sections from `counts` with a total length in [lo, hi].
      mode 'long': as long as possible (a few mm traded for fewer pieces), 'few': fewest pieces, then shortest,
      'short': shortest, then fewest pieces.
      Returns { len, pieces } (longest first) or null. */
-  function compose(counts, lo, hi, mode) {
+  function composeNormal(counts, lo, hi, mode) {
     var cap = Math.floor(Math.min(hi, BED)), from = Math.max(1, Math.ceil(lo));
     if (cap < from) return null;
     var items = [];
@@ -65,7 +74,40 @@
     return { len: best, pieces: pieces };
   }
 
-  function useStock(counts, pieces) { pieces.forEach(function (L) { counts[L]--; }); }
+  /* Normal sections first; only when they cannot make a length in [lo, hi], horn pieces (one at each end at most) are tried.
+     Returns { len (tip length), pieces (piece lengths, left to right), kinds ('' | 'L' | 'R' per piece), tips (tip
+     length per piece: the same as the piece) } or null. horns: from hornCounts. */
+  function compose(counts, lo, hi, mode, horns, ext, need) {
+    need = need || {};
+    var r = need.L || need.R ? null : composeNormal(counts, lo, hi, mode);
+    if (r) { r.kinds = r.pieces.map(function () { return ''; }); r.tips = r.pieces.slice(); return r; }
+    if (!horns) return null;
+    var avail = function (side) { return [null].concat(Object.keys(horns[side]).filter(function (k) { return horns[side][k] > 0; }).map(Number)); };
+    var best = null, bestSc = -Infinity;
+    avail('L').forEach(function (a) {
+      avail('R').forEach(function (b) {
+        if (a === null && b === null) return;
+        if ((need.L && a === null) || (need.R && b === null)) return;
+        var h = (a === null ? 0 : a) + (b === null ? 0 : b);
+        if (h > hi) return;
+        var rest = lo - h <= 0 ? { len: 0, pieces: [] } : composeNormal(counts, lo - h, hi - h, mode);
+        if (!rest) return;
+        var len = h + rest.len, cnt = rest.pieces.length + (a === null ? 0 : 1) + (b === null ? 0 : 1);
+        var sc = (mode === 'long' ? len - 8 * cnt : mode === 'short' ? -len * 100 - cnt : -cnt * 10000 - len) - ((a === null ? 0 : 1) + (b === null ? 0 : 1)) * 0.5;
+        if (sc > bestSc) { bestSc = sc; best = { a: a, b: b, rest: rest, len: len }; }
+      });
+    });
+    if (!best) return null;
+    var pieces = [], kinds = [], tips = [];
+    if (best.a !== null) { pieces.push(best.a); kinds.push('L'); tips.push(best.a); }
+    best.rest.pieces.forEach(function (L) { pieces.push(L); kinds.push(''); tips.push(L); });
+    if (best.b !== null) { pieces.push(best.b); kinds.push('R'); tips.push(best.b); }
+    return { len: best.len, pieces: pieces, kinds: kinds, tips: tips };
+  }
+
+  function useStock(counts, c, horns) {
+    c.pieces.forEach(function (L, i) { var kd = c.kinds && c.kinds[i]; if (kd) horns[kd][L]--; else counts[L]--; });
+  }
 
   function inPoly(poly, x, y) {
     var c = false;
@@ -123,7 +165,7 @@
       return c;
     };
     var res = { pa: -Infinity, pb: Infinity, da: -Infinity, db: Infinity, pmin: Infinity, pmax: -Infinity,
-      hitPunch: false, hitDie: false, tooHigh: false, tooLow: false };
+      hitPunch: false, hitDie: false, tooHigh: false, tooLow: false, hits: [] };
     (inp.progress || PROGRESS).forEach(function (prog) {
       var s = Sim3D.sample({ key: inp.key, segs: inp.segs, bends: inp.bends, step: k, progress: prog, thickness: th }, inp.spacing || SAMPLE);
       if (!s) return;
@@ -153,7 +195,7 @@
         }
         var inside = Math.abs(x) < half - 1;
         if (nearP && (inPoly(punch, w, y + m) || inPoly(punch, w - m, y) || inPoly(punch, w + m, y))) {
-          if (inside) res.hitPunch = true;
+          if (inside) { res.hitPunch = true; if (res.hits.length < 600) res.hits.push([x, y - s.tip]); }   // where, and how high above the tip
           else if (x < 0) res.pa = Math.max(res.pa, x); else res.pb = Math.min(res.pb, x);
         }
         if (nearD && (inPoly(die, w, y - th / 2 + 0.3) || inPoly(die, w - m, y) || inPoly(die, w + m, y))) {
@@ -163,6 +205,21 @@
       }
     });
     return res;
+  }
+
+  /* The part reaches into the punch inside the bend (inbent flanges). A horn piece, whose body is cut back `ext` mm at its end
+     above `hh` mm over the tip, clears that where it is high enough and within ext of the end of the tool. For a tool that
+     covers len - 2 * short of the bend: which horns the bend needs and whether horns can do it at all. */
+  function hornNeed(a, len, short, ext, hh) {
+    var T = Math.max(5, len - 2 * short), r = { needL: false, needR: false, low: false, reliefL: 0, reliefR: 0, ok: true };
+    (a.hits || []).forEach(function (h) {
+      if (Math.abs(h[0]) > T / 2) return;
+      if (h[1] <= hh) { r.low = true; return; }
+      if (h[0] < 0) { r.needL = true; r.reliefL = Math.max(r.reliefL, h[0] + T / 2); }
+      else { r.needR = true; r.reliefR = Math.max(r.reliefR, T / 2 - h[0]); }
+    });
+    r.ok = !r.low && r.reliefL <= ext + 1e-6 && r.reliefR <= ext + 1e-6;
+    return r;
   }
 
   /* Tool centre (relative to the bend centre) for a tool of length L between the limits a..b that still covers
@@ -181,7 +238,9 @@
     var ps = parseStock(inp.punchStock);
     if (ps.bad.length) warns.push('Punch sections not understood: ' + ps.bad.join(', '));
     if (!ps.list.length) warns.push('The punch section library is empty.');
-    var pStock = stockCounts(ps.list);
+    var pStock = stockCounts(ps.list), hornStock = hornCounts(ps.list);
+    var hornExt = inp.hornExt === undefined ? 20 : Math.max(0, +inp.hornExt || 0);
+    var hornH = isFinite(inp.hornH) ? Math.max(0, +inp.hornH) : 20;          // the horn's body starts this high above the tip
     var dieL = Math.min(BED, (inp.die && +inp.die.len) || BED), dieC = (inp.die && +inp.die.centre) || 0;
 
     var B = inp.bends.map(function (b, k) {
@@ -189,38 +248,113 @@
       var lo = Math.max(5, b.len - 2 * short);
       var hi = isFinite(a.pa) && isFinite(a.pb) ? a.pb - a.pa - 2 * clear : Infinity;
       var w = [];
-      if (a.hitPunch) w.push('the part hits the punch (an earlier flange is in the way): try another bend order or a gooseneck punch');
       if (a.hitDie || isFinite(a.da) || isFinite(a.db)) w.push('the part hits the die (a flange bent down reaches it; the die is one piece)');
       if (a.tooHigh) w.push('a flange reaches the punch holder (higher than about 147 mm above the punch tip)');
       if (a.tooLow) w.push('a flange hangs lower than the die');
-      if (hi < lo) w.push('no punch fits: the gap between the flanges is ' + r1(a.pb - a.pa) + ' mm, the bend is ' + r1(b.len) + ' mm');
-      return { k: k, len: b.len, lo: lo, hi: hi, A: a, warns: w, boxed: isFinite(hi), station: -1 };
+      if (hi < lo) {
+        /* The clearance to the flanges is a hard limit, "punch shorter than bend" only a wish: take the longest punch the gap
+           allows (a little shorter is fine too, so that bends in the same gap share a station) and say that it is short. */
+        w.push('the gap between the flanges is ' + r1(a.pb - a.pa) + ' mm, so the punch can be at most ' + r1(Math.max(0, hi)) + ' mm; the bend is ' + r1(b.len) + ' mm, so the punch will be more than ' + short + ' mm shorter per end');
+        lo = Math.min(Math.max(5, hi - 3 * short), Math.max(hi, 1));
+      }
+      /* Inbent flanges in the way inside the bend: the punch may stop short of them or have a horn there, so it may be a
+         little shorter than the wish ("punch shorter than bend") when that is what it takes. */
+      var hits = a.hits || [], maxSlack = Math.min(2.5 * short, 0.2 * b.len);
+      var loMax = Math.max(5, Math.min(lo, b.len - 2 * maxSlack));      // the shortest punch it will take to save a station or to clear flanges
+      return { k: k, len: b.len, lo: lo, loMax: loMax, hi: hi, A: a, warns: w, boxed: isFinite(hi), station: -1, hits: hits, maxSlack: maxSlack };
     });
 
+    /* Is there a place for a punch of length L (with horns at the ends in `kinds`) on this bend where it hits nothing? The
+       punch covers the bend to within `slack` mm of each end (the wish is `short`; more only when needed), stays `clear`
+       from the flanges at the ends, and a horn at an end clears flanges higher than hornH within its `hornExt`.
+       Returns { tc (centre of the punch from the middle of the bend), slack } or null. */
+    function place(bd, L, kinds) {
+      var half = bd.len / 2, A = bd.A, hasL = kinds.indexOf('L') >= 0, hasR = kinds.indexOf('R') >= 0;
+      var tmin = isFinite(A.pa) ? A.pa + clear + L / 2 : -Infinity, tmax = isFinite(A.pb) ? A.pb - clear - L / 2 : Infinity;
+      var levels = [short];
+      for (var f = 1.25; short * f <= bd.maxSlack + 1e-6; f += 0.25) levels.push(short * f);
+      for (var li = 0; li < levels.length; li++) {
+        var sl = levels[li];
+        var lo = Math.max(tmin, half - sl - L / 2), hi = Math.min(tmax, -half + sl + L / 2);
+        if (lo > hi + 1e-6) continue;
+        var best = null;
+        for (var tc = Math.ceil(lo); tc <= hi + 1e-6; tc++) {
+          var x0 = tc - L / 2, x1 = tc + L / 2, ok = true;
+          for (var i = 0; i < bd.hits.length && ok; i++) {
+            var h = bd.hits[i];
+            if (h[0] < x0 || h[0] > x1) continue;
+            if (!(h[1] > hornH && ((hasL && h[0] <= x0 + hornExt + 1e-6) || (hasR && h[0] >= x1 - hornExt - 1e-6)))) ok = false;
+          }
+          if (ok && (best === null || Math.abs(tc) < Math.abs(best))) best = tc;
+        }
+        if (best !== null) return { tc: best, slack: sl };
+        if (!bd.hits.length) break;
+      }
+      return null;
+    }
+
     /* Stations: bends that must fit between flanges first, tightest first, then the open bends (longest first).
-       Each station takes every bend whose range contains its length. openMode picks the punch for open bends:
-       'few' = fewest pieces (a full length punch if there is one), 'short' = shortest that does the job. */
+       Each station takes every bend whose range contains its length and that it can be placed on without hitting. openMode
+       picks the punch for open bends: 'few' = fewest pieces (a full length punch if there is one), 'short' = shortest that
+       does the job. A bend with inbent flanges in the way gets the plainest punch that clears them: a shorter one, or one
+       with a horn on the side that needs it (one horn is enough when only one side needs it). */
+    var reach = function (bd) { return bd.hi >= bd.lo ? bd.hi : Math.ceil(bd.lo); };     // longest punch a bend takes (no punch fits: its minimum, rounded up)
     function build(openMode) {
-      var stock = stockCounts(ps.list), stations = [], extra = [];
+      var stock = stockCounts(ps.list), horns = hornCounts(ps.list), stations = [], extra = [];
       B.forEach(function (bd) { bd.station = -1; bd.extra = []; });
       var order = B.slice().sort(function (p, q) {
+        if (!p.hits.length !== !q.hits.length) return p.hits.length ? -1 : 1;           // the bends with flanges in the way decide the station
         if (isFinite(p.hi) !== isFinite(q.hi)) return isFinite(p.hi) ? -1 : 1;
         return isFinite(p.hi) ? p.hi - q.hi : q.lo - p.lo;
       });
+      var fits = function (st, o) {
+        if (st.len < o.loMax - 1e-6 || st.len > reach(o) + 1e-6) return false;
+        return st.missing ? st.len >= o.lo - 1e-6 : place(o, st.len, st.kinds) !== null;
+      };
       order.forEach(function (bd) {
         if (bd.station >= 0) return;
-        var fit = stations.filter(function (st) { return st.len >= bd.lo - 1e-6 && st.len <= bd.hi + 1e-6; })[0];
+        var fit = stations.filter(function (st) { return fits(st, bd); })[0];
         if (!fit) {
-          var hi = Math.max(bd.lo, Math.min(bd.hi, BED));
-          var c = compose(stock, bd.lo, hi, isFinite(bd.hi) ? 'long' : openMode);
-          if (c) useStock(stock, c.pieces);
-          else {
-            bd.extra.push('the punch sections left cannot make ' + Math.ceil(bd.lo) + (isFinite(bd.hi) ? '-' + Math.floor(bd.hi) : '') + ' mm');
-            c = { len: Math.ceil(bd.lo), pieces: [], missing: true };
+          var hi = Math.max(Math.ceil(bd.lo), Math.min(bd.hi, BED)), c = null;
+          if (!bd.hits.length) {
+            c = compose(stock, bd.lo, hi, isFinite(bd.hi) ? 'long' : openMode, horns, hornExt);
+          } else {
+            /* candidates: no horn, horn left, horn right, both; each from the longest punch down until one fits the bend.
+               The best serves the most bends (one station if it can), then asks the least of the "punch shorter than bend" wish. */
+            var best = null, floor = Math.ceil(bd.loMax);
+            [{}, { L: true }, { R: true }, { L: true, R: true }].forEach(function (need) {
+              var top = hi, guard = 0;
+              while (top >= floor && guard++ < 80) {
+                var cc = compose(stock, floor, top, 'long', horns, hornExt, need);
+                if (!cc) break;
+                var pl = place(bd, cc.len, cc.kinds);
+                if (pl) {
+                  var cand = { len: cc.len, kinds: cc.kinds, missing: false }, served = 0, slack = pl.slack;
+                  B.forEach(function (o) {
+                    if (o.station >= 0 || o === bd) return;
+                    var q = fits(cand, o);
+                    if (q) { served++; var pq = place(o, cc.len, cc.kinds); if (pq) slack = Math.max(slack, pq.slack); }
+                  });
+                  var nh = cc.kinds.filter(function (kd) { return kd; }).length;
+                  var score = -served * 1000 + Math.max(0, slack - short) * 3 + nh * 5 + (hi - cc.len) * 0.1;
+                  if (!best || score < best.score) best = { c: cc, score: score };
+                  break;
+                }
+                top = cc.len - 1;
+              }
+            });
+            c = best ? best.c : null;
           }
-          fit = { len: c.len, punch: c.pieces, missing: !!c.missing, bends: [] };
+          if (c) useStock(stock, c, horns);
+          else {
+            bd.extra.push('the punch sections left cannot make ' + Math.ceil(bd.lo) + (isFinite(bd.hi) ? '-' + Math.floor(bd.hi) : '') + ' mm' +
+              (bd.hits.length ? ' that clears the flanges inside the bend (try a horn piece, or another bend order)' : ''));
+            c = { len: Math.ceil(bd.lo), pieces: [], kinds: [], tips: [], missing: true };
+          }
+          fit = { len: c.len, punch: c.pieces, kinds: c.kinds, tips: c.tips, missing: !!c.missing, bends: [] };
           stations.push(fit);
-          B.forEach(function (o) { if (o.station < 0 && o.lo <= c.len + 1e-6 && o.hi >= c.len - 1e-6) { o.station = stations.length - 1; fit.bends.push(o.k); } });
+          B.forEach(function (o) { if (o.station < 0 && fits(fit, o)) { o.station = stations.length - 1; fit.bends.push(o.k); } });
+          if (bd.station < 0) { bd.station = stations.length - 1; fit.bends.push(bd.k); }
         } else {
           bd.station = stations.indexOf(fit); fit.bends.push(bd.k);
         }
@@ -230,11 +364,13 @@
       stations.sort(function (p, q) { return Math.min.apply(null, p.bends) - Math.min.apply(null, q.bends); });
       stations.forEach(function (st, i) {
         st.name = String.fromCharCode(65 + i);
+        st.parts = st.punch.map(function (L, n) { return st.kinds[n] ? 'horn ' + (st.kinds[n] === 'L' ? 'left' : 'right') + ' ' + L : String(L); });
         st.bends.sort(function (p, q) { return p - q; });
         st.bends.forEach(function (k) { B[k].station = i; });
         st.bends.forEach(function (k) {
-          var bd = B[k];
-          bd.tc = centreTool(st.len, bd.A.pa, bd.A.pb, bd.len / 2, short, clear);
+          var bd = B[k], pl = st.missing ? null : place(bd, st.len, st.kinds);
+          bd.tc = pl ? pl.tc : centreTool(st.len, bd.A.pa, bd.A.pb, bd.len / 2, short, clear);
+          bd.slack = pl ? pl.slack : short;
         });
         st.width = st.len;
         st.overL = 0; st.overR = 0;
@@ -260,7 +396,7 @@
         st.u0 = Math.round(u); st.u1 = Math.round(u + st.width); st.centre = (st.u0 + st.u1) / 2;
         u += st.width;
       });
-      return { stations: stations, total: total, warns: extra, tc: B.map(function (bd) { return bd.tc; }),
+      return { stations: stations, total: total, warns: extra, tc: B.map(function (bd) { return bd.tc; }), slack: B.map(function (bd) { return bd.slack; }),
         station: B.map(function (bd) { return bd.station; }), extra: B.map(function (bd) { return bd.extra; }) };
     }
 
@@ -271,9 +407,24 @@
       var alt = build('short');
       if (alt.total < res.total) res = alt;
     }
-    B.forEach(function (bd, k) { bd.tc = res.tc[k]; bd.station = res.station[k]; bd.warns = bd.warns.concat(res.extra[k]); });
+    B.forEach(function (bd, k) { bd.tc = res.tc[k]; bd.slack = res.slack[k]; bd.station = res.station[k]; bd.warns = bd.warns.concat(res.extra[k]); });
     var stations = res.stations, total = res.total;
     res.warns.forEach(function (w) { warns.push(w); });
+
+    /* With the real stations: what does the punch still hit? A horn at an end clears what is high enough within its horn. */
+    B.forEach(function (bd) {
+      var st = stations[bd.station], hits = bd.A.hits || [], x0 = bd.tc - st.len / 2, x1 = bd.tc + st.len / 2;
+      var hasL = st.kinds.indexOf('L') >= 0, hasR = st.kinds.indexOf('R') >= 0, left = 0, cleared = 0;
+      hits.forEach(function (h) {
+        if (h[0] < x0 || h[0] > x1) return;
+        if (h[1] > hornH && ((hasL && h[0] <= x0 + hornExt + 1e-6) || (hasR && h[0] >= x1 - hornExt - 1e-6))) { cleared++; return; }
+        left++;
+      });
+      bd.hitLeft = left;
+      if (left) bd.warns.unshift('the part hits the punch (an earlier flange is in the way): try another bend order, a horn piece or a gooseneck punch');
+      else if (cleared) bd.horn = (hasL ? 'left' : '') + (hasL && hasR ? ' and ' : '') + (hasR ? 'right' : '');
+      if (!left && hits.length && bd.slack > short + 1e-6) bd.warns.push('the punch stops ' + r1(bd.slack) + ' mm short of the bend at an end (more than the ' + short + ' mm you want) to clear the flange');
+    });
 
     /* Stations moved by hand, then checks on where they ended up. */
     var moves = inp.moves || {}, d0 = dieC - dieL / 2, d1 = dieC + dieL / 2;
@@ -292,18 +443,18 @@
       else if (gap < need + 5) warns.push('Stations ' + pr.name + ' and ' + st.name + ' are ' + Math.round(gap) + ' mm apart; the part needs about ' + Math.ceil(need + 5) + ' mm so it stays clear of the other punch.');
     });
 
-    var tools = { punch: [], die: [[dieC - dieL / 2, dieC + dieL / 2]] };
+    var tools = { punch: [], die: [[dieC - dieL / 2, dieC + dieL / 2]], hornExt: hornExt, hornH: hornH };
     stations.forEach(function (st) {
       var x = st.u0;
-      st.punch.forEach(function (L) { tools.punch.push([x, x + L]); x += L; });
-      if (!st.punch.length) tools.punch.push([st.u0, st.u1]);
+      st.tips.forEach(function (T, i) { tools.punch.push([x, x + T, st.kinds[i]]); x += T; });
+      if (!st.punch.length) tools.punch.push([st.u0, st.u1, '']);
     });
 
     var bends = B.map(function (bd) {
       var st = stations[bd.station];
       return {
         station: bd.station, stationName: st.name, toolLen: st.len, boxed: bd.boxed,
-        gap: bd.boxed ? r1(bd.A.pb - bd.A.pa) : null, shift: r1(st.centre - bd.tc), warns: bd.warns
+        gap: bd.boxed ? r1(bd.A.pb - bd.A.pa) : null, shift: r1(st.centre - bd.tc), warns: bd.warns, horn: bd.horn || ''
       };
     });
     B.forEach(function (bd, k) { bd.warns.forEach(function (w) { warns.push('Bend ' + (k + 1) + ': ' + w + '.'); }); });
@@ -357,13 +508,17 @@
     return y;
   }
 
-  function pieceRow(pg, pieces, len, x0, y, h, k, colors, label) {
+  var HORN = '#d9a441';
+
+  /* tips: width of each piece (a horn piece is longer than its section); kinds: '' | 'L' | 'R' per piece. */
+  function pieceRow(pg, tips, len, x0, y, h, k, colors, label, kinds, sections) {
     var x = x0;
-    if (!pieces.length) { pg.rect(x0, y, len * k, h, { stroke: CRIT, w: 0.8 }); return; }
-    pieces.forEach(function (L, i) {
-      pg.rect(x, y, L * k, h, { fill: colors[i % 2], stroke: '#ffffff', w: 0.6 });
+    if (!tips.length) { pg.rect(x0, y, len * k, h, { stroke: CRIT, w: 0.8 }); return; }
+    tips.forEach(function (L, i) {
+      var horn = kinds && kinds[i];
+      pg.rect(x, y, L * k, h, { fill: horn ? HORN : colors[i % 2], stroke: '#ffffff', w: 0.6 });
       if (label) {
-        var s = String(L);
+        var s = (horn ? (horn === 'L' ? 'HL ' : 'HR ') : '') + String(sections ? sections[i] : L);
         if (PDF.textWidth(s, 7, true) + 3 < L * k) pg.text(x + L * k / 2, y + h / 2 + 2.5, s, { size: 7, bold: true, color: colors === PUNCH ? INK : '#ffffff', align: 'center' });
       }
       x += L * k;
@@ -386,7 +541,7 @@
     pg.rect(X(dc - dl / 2), y + 24, dl * k, 13, { fill: DIE[0] });
     pg.text(X(dc), y + 33, 'die ' + dl + ' mm (one piece)', { size: 7, bold: true, color: '#ffffff', align: 'center' });
     plan.stations.forEach(function (st) {
-      pieceRow(pg, st.punch, st.len, X(st.u0), y + 8, 13, k, PUNCH, false);
+      pieceRow(pg, st.tips, st.len, X(st.u0), y + 8, 13, k, PUNCH, false, st.kinds);
       pg.text(X(st.centre), y + 6, st.name, { size: 8.5, bold: true, color: BRAND, align: 'center' });
     });
     pg.text(x0 - 2, y + 18, 'P', { size: 6.5, color: MUTED, align: 'right' });
@@ -401,8 +556,8 @@
       pg.text(cx + 8, cy + 14, 'Station ' + st.name, { size: 9.5, bold: true, color: BRAND });
       pg.text(cx + cw - 8, cy + 14, 'bends ' + st.bends.map(function (k) { return k + 1; }).join(', '), { size: 8, color: MUTED, align: 'right', maxW: cw - 80 });
       var kk = (cw - 20) / Math.max(st.width, 1), sx = cx + 10 + (cw - 20 - st.width * kk) / 2;
-      pieceRow(pg, st.punch, st.len, sx, cy + 26, 22, kk, PUNCH, true);
-      pg.text(cx + 8, cy + 66, 'Punch ' + (st.punch.length ? st.punch.join(' + ') + ' = ' + st.len : 'MISSING ' + st.len) + ' mm', { size: 7.8, maxW: cw - 16, color: st.missing ? CRIT : INK });
+      pieceRow(pg, st.tips, st.len, sx, cy + 26, 22, kk, PUNCH, true, st.kinds, st.punch);
+      pg.text(cx + 8, cy + 66, 'Punch ' + (st.punch.length ? st.parts.join(' + ') + ' = ' + st.len : 'MISSING ' + st.len) + ' mm', { size: 7.8, maxW: cw - 16, color: st.missing ? CRIT : INK });
       pg.text(cx + 8, cy + 78, 'From ' + sgnMm(st.u0) + ' to ' + sgnMm(st.u1) + ' mm (machine centre = 0)', { size: 7.8, maxW: cw - 16, color: MUTED });
     });
     return y + Math.ceil(n / per) * 92;
@@ -420,7 +575,7 @@
       { t: 'Left end', w: 70, align: 'right' }, { t: 'Right end', w: 70, align: 'right' },
       { t: 'From bed left end', w: 110, align: 'right' }, { t: 'Bends', w: 118 }
     ], plan.stations.map(function (st) {
-      return [{ t: st.name, bold: true, color: BRAND }, st.punch.length ? st.punch.join(' + ') : { t: 'missing', color: CRIT }, st.len,
+      return [{ t: st.name, bold: true, color: BRAND }, st.punch.length ? st.parts.join(' + ') : { t: 'missing', color: CRIT }, st.len,
         sgnMm(st.u0), sgnMm(st.u1),
         (st.u0 + BED / 2) + ' - ' + (st.u1 + BED / 2), st.bends.map(function (k) { return k + 1; }).join(', ')];
     }));
@@ -469,5 +624,5 @@
     return doc.bytes();
   }
 
-  window.Tooling = { parseStock: parseStock, compose: compose, analyse: analyse, plan: plan, pdf: pdf };
+  window.Tooling = { parseStock: parseStock, compose: compose, analyse: analyse, hornNeed: hornNeed, plan: plan, pdf: pdf };
 })();
