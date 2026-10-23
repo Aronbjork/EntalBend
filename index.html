@@ -34,8 +34,15 @@
   </div>
 </header>
 
+<nav class="mainTabs" id="mainTabs">
+  <button type="button" data-page="draw" class="on">Drawing</button>
+  <button type="button" data-page="bend">Bend &amp; simulate</button>
+  <button type="button" data-page="program">Program</button>
+  <button type="button" data-page="usb">USB</button>
+</nav>
+
 <div class="page">
-<main class="layout">
+<main class="layout" data-pg="draw">
   <section class="panel viewer">
     <div class="canvasWrap" id="dropZone">
       <canvas id="cv"></canvas>
@@ -55,6 +62,29 @@
   </section>
 
   <aside class="side">
+    <section class="panel">
+      <details open>
+        <summary>Bend line detection</summary>
+        <div class="fields">
+          <label class="check"><input type="checkbox" id="useLinetype" checked> Dashed linetype means bend</label>
+          <label>Join gaps up to (mm)<input id="gap" type="number" step="0.5" min="0" value="6"></label>
+          <label>Ignore bend lines shorter than (mm)<input id="minLen" type="number" step="1" min="0" value="5"></label>
+          <label>Drawing scale<input id="scale" type="number" step="any" min="0.0001" value="1"></label>
+        </div>
+        <div class="tableWrap">
+          <table class="plain" id="layerTable">
+            <thead><tr><th>Layer</th><th>Linetype</th><th>Bend</th><th>Ignore</th></tr></thead>
+            <tbody id="layerBody"><tr><td colspan="4" class="empty">Load a DXF to list its layers.</td></tr></tbody>
+          </table>
+        </div>
+        <p class="muted small" id="detectInfo"></p>
+      </details>
+    </section>
+  </aside>
+</main>
+
+<div class="progPage" data-pg="program" hidden>
+  <div class="progCol">
     <section class="panel">
       <h2>Saved programs</h2>
       <div class="fields">
@@ -77,7 +107,8 @@
         </table>
       </div>
     </section>
-
+  </div>
+  <div class="progCol">
     <section class="panel">
       <h2>Program</h2>
       <div class="fields">
@@ -93,47 +124,10 @@
         <label title="The backgauge distance is measured to the farthest edge that is at least this wide. Small tabs narrower than this are ignored. 0 = use the farthest point.">Ignore tabs narrower than (mm)<input id="gaugeMin" type="number" step="5" min="0" value="60"></label>
       </div>
     </section>
+  </div>
+</div>
 
-    <section class="panel">
-      <h2>USB export (Operateur 2000)</h2>
-      <div class="warn">Writes the program in the machine's own format: <b>N.PLI</b> plus an updated <b>FPROG.DAT</b>. Back up the stick first, and test with a simple part. Uses Program no., Job reference (13 chars), Thickness, Punch and Die from the Program panel. Program no. must be 1-98.</div>
-      <div class="fields">
-        <label>Angle added (overbend)<input id="usbAdd" type="number" step="0.1" value="0"></label>
-        <label>Y penetration (mm)<input id="usbY" type="number" step="0.01" placeholder="empty = 0, machine calculates"></label>
-        <label>Default Z1/Z2 (mm)<input id="usbZ" type="number" step="any" value="60" title="Used for bends where Z is left empty in the table"></label>
-        <label>Default R1/R2 (mm)<input id="usbR" type="number" step="any" value="0.1" title="Backgauge height, used where R is left empty in the table"></label>
-      </div>
-      <div class="toolbar">
-        <button class="btn primary" id="btnUsbDir" type="button">Write to USB folder</button>
-        <label class="mini" title="Pick the FPROG.DAT from the stick, then both files are downloaded">Download files
-          <input type="file" id="usbFprog" accept=".dat,.DAT" hidden>
-        </label>
-      </div>
-      <p class="muted small" id="usbInfo">Y is not calculated here. Leave it empty to write 0 and let the control calculate it from the angle (retype the angle on each step if it does not). Or type the value the control shows.</p>
-    </section>
-
-    <section class="panel">
-      <details open>
-        <summary>Bend line detection</summary>
-        <div class="fields">
-          <label class="check"><input type="checkbox" id="useLinetype" checked> Dashed linetype means bend</label>
-          <label>Join gaps up to (mm)<input id="gap" type="number" step="0.5" min="0" value="6"></label>
-          <label>Ignore bend lines shorter than (mm)<input id="minLen" type="number" step="1" min="0" value="5"></label>
-          <label>Drawing scale<input id="scale" type="number" step="any" min="0.0001" value="1"></label>
-        </div>
-        <div class="tableWrap">
-          <table class="plain" id="layerTable">
-            <thead><tr><th>Layer</th><th>Linetype</th><th>Bend</th><th>Ignore</th></tr></thead>
-            <tbody id="layerBody"><tr><td colspan="4" class="empty">Load a DXF to list its layers.</td></tr></tbody>
-          </table>
-        </div>
-        <p class="muted small" id="detectInfo"></p>
-      </details>
-    </section>
-  </aside>
-</main>
-
-<section class="panel bends sim" id="bendWork">
+<section class="panel bends sim" id="bendWork" data-pg="bend" hidden>
   <div class="rowHead">
     <div class="workTabs">
       <button class="mini on" type="button" data-work="sim">Bend sequence &amp; simulator</button>
@@ -228,6 +222,25 @@
   </div>
 </section>
 
+<div class="usbPage" data-pg="usb" hidden>
+  <section class="panel">
+    <h2>USB export (Operateur 2000)</h2>
+    <div class="warn">Writes the program in the machine's own format: <b>N.PLI</b> plus an updated <b>FPROG.DAT</b>. Back up the stick first, and test with a simple part. Uses Program no., Job reference (13 chars), Thickness, Punch and Die from the Program panel. Program no. must be 1-98.</div>
+    <div class="fields">
+      <label>Angle added (overbend)<input id="usbAdd" type="number" step="0.1" value="0"></label>
+      <label>Y penetration (mm)<input id="usbY" type="number" step="0.01" placeholder="empty = 0, machine calculates"></label>
+      <label>Default Z1/Z2 (mm)<input id="usbZ" type="number" step="any" value="60" title="Used for bends where Z is left empty in the table"></label>
+      <label>Default R1/R2 (mm)<input id="usbR" type="number" step="any" value="0.1" title="Backgauge height, used where R is left empty in the table"></label>
+    </div>
+    <div class="toolbar">
+      <button class="btn primary" id="btnUsbDir" type="button">Write to USB folder</button>
+      <label class="mini" title="Pick the FPROG.DAT from the stick, then both files are downloaded">Download files
+        <input type="file" id="usbFprog" accept=".dat,.DAT" hidden>
+      </label>
+    </div>
+    <p class="muted small" id="usbInfo">Y is not calculated here. Leave it empty to write 0 and let the control calculate it from the angle (retype the angle on each step if it does not). Or type the value the control shows.</p>
+  </section>
+
 <section class="panel" id="usbEdit">
   <div class="rowHead">
     <h2>Programs on the USB stick</h2>
@@ -255,24 +268,8 @@
     </div>
   </div>
 </section>
+</div>
 
-<section class="panel">
-    <h2>Program output</h2>
-    <div class="toolbar">
-      <label class="inline">Format
-        <select id="outFormat">
-          <option value="text">Readable text</option>
-          <option value="csv">CSV (semicolon)</option>
-          <option value="json">JSON</option>
-        </select>
-      </label>
-      <button class="mini" id="regen" type="button">Regenerate</button>
-      <button class="mini" id="dlBtn" type="button">Download</button>
-      <button class="mini" id="copyBtn" type="button">Copy</button>
-      <span class="muted small" id="outEditedNote" hidden>Edited by hand. Regenerate to discard.</span>
-    </div>
-    <textarea id="outText" spellcheck="false" rows="16"></textarea>
-</section>
 </div>
 
 <script src="dxf.js"></script>

@@ -15,13 +15,13 @@
     gap: 6, minLen: 5, scale: 1,
     seq: [],                       // [{id, angle, dir:'UP'|'DOWN', sign:+1|-1, offset}]
     view: { ox: 0, oy: 0, k: 1 }, viewTouched: false,   // refit on resize until the user zooms or pans
-    hover: null, outputEdited: false, simStep: 0, simDrag: null, simProgress: 0, simTab: '3d',
+    hover: null, simStep: 0, simDrag: null, simProgress: 0, simTab: '3d',
     plan: null, stationMoves: {},  // stationMoves: { A: mm } stations moved by hand
     stepText: null, stepName: '', stepInfo: '', stepMap: {}, suggestions: null   // STEP import: bend id -> bend index in the STEP
   };
 
   var SETTINGS_IDS = ['progNo', 'job', 'material', 'thickness', 'punch', 'die', 'defAngle', 'gaugeMin',
-    'outFormat', 'kFactor', 'tlDieLen', 'tlDieC', 'tlClear', 'tlShort', 'tlGap', 'tlHorn', 'tlHornH'];
+    'kFactor', 'tlDieLen', 'tlDieC', 'tlClear', 'tlShort', 'tlGap', 'tlHorn', 'tlHornH'];
   var SETTINGS_CHECKS = ['tlUse', 'tlPics'];
 
   /* ------------------------------------------------------------------ status */
@@ -192,7 +192,6 @@
           '</tr>';
       }).join('');
     }
-    refreshOutput(false);
     draw();
     renderSettings();
     renderSuggest();
@@ -209,67 +208,10 @@
       var cell = trs[i] && trs[i].querySelector('[data-x]');
       if (cell) cell.textContent = f2(r.xFinal);
     });
-    refreshOutput(false);
     drawSim();
   }
 
-  /* ------------------------------------------------------------------ output */
-
-  function programData() {
-    var rows = computeRows();
-    return {
-      source: state.fileName,
-      program: $('progNo').value.trim(),
-      job: $('job').value.trim(),
-      material: $('material').value.trim(),
-      thickness: parseFloat($('thickness').value) || 0,
-      punch: $('punch').value.trim(),
-      die: $('die').value.trim(),
-      bends: rows.map(function (r) {
-        return {
-          seq: r.n, bend: r.b.id, angle: r.e.angle, direction: r.e.dir, flip: r.flip,
-          length: r2(r.b.len), toEdge: r2(r.xEdge), offset: r2(r.e.offset), x: r2(r.xFinal),
-          secondBendOnFlangeOf: r.same ? r.same.n : null
-        };
-      })
-    };
-  }
-
-  function formatProgram(kind) {
-    var d = programData();
-    if (kind === 'json') return JSON.stringify(d, null, 2);
-    if (kind === 'csv') {
-      var out = ['seq;angle;direction;flip;length;to_edge;offset;x'];
-      d.bends.forEach(function (b) {
-        out.push([b.seq, b.angle, b.direction, b.flip ? 'FLIP' : '', f2(b.length), f2(b.toEdge), f2(b.offset), f2(b.x)].join(';'));
-      });
-      return out.join('\r\n');
-    }
-    var L = [];
-    L.push('ENTALBEND PROGRAM');
-    L.push('SOURCE     ' + d.source);
-    L.push('PROGRAM    ' + d.program);
-    L.push('JOB        ' + d.job);
-    L.push('MATERIAL   ' + d.material);
-    L.push('THICKNESS  ' + f2(d.thickness));
-    L.push('PUNCH      ' + d.punch);
-    L.push('DIE        ' + d.die);
-    L.push('BENDS      ' + d.bends.length);
-    L.push('');
-    L.push('SEQ  ANGLE  DIR   TURN  LENGTH   X        OFFSET');
-    d.bends.forEach(function (b) {
-      L.push(String(b.seq).padEnd(5) + String(b.angle).padEnd(7) + b.direction.padEnd(6) + (b.flip ? 'FLIP' : '-').padEnd(6) +
-        f2(b.length).padEnd(9) + f2(b.x).padEnd(9) + f2(b.offset));
-    });
-    return L.join('\r\n');
-  }
-
-  function refreshOutput(force) {
-    if (state.outputEdited && !force) return;
-    $('outText').value = formatProgram($('outFormat').value);
-    state.outputEdited = false;
-    $('outEditedNote').hidden = true;
-  }
+  /* ------------------------------------------------------------------ files */
 
   function download(name, text, mime) {
     var blob = new Blob([text], { type: mime || 'text/plain' });
@@ -1219,7 +1161,6 @@
       },
       fields: fields,
       seq: state.seq.map(function (e) { return { id: e.id, angle: e.angle, dir: e.dir, sign: e.sign, offset: e.offset, z1: axisVal(e.z1), z2: axisVal(e.z2), r1: axisVal(e.r1), r2: axisVal(e.r2), zAuto: !!e.zAuto, zAt: isFinite(e.zAt) ? e.zAt : null, set: cleanSet(e.set) }; }),
-      output: state.outputEdited ? { format: $('outFormat').value, text: $('outText').value } : null,
       step: state.stepInfo ? { name: state.stepName, info: state.stepInfo } : null,
       tooling: { moves: state.stationMoves }
     };
@@ -1251,14 +1192,7 @@
     });
     state.currentName = p.name || '';
     $('progName').value = state.currentName;
-    state.outputEdited = false;
     renderTable();
-    if (p.output && typeof p.output.text === 'string') {
-      $('outFormat').value = p.output.format || 'text';
-      $('outText').value = p.output.text;
-      state.outputEdited = true;
-      $('outEditedNote').hidden = false;
-    }
     renderLibrary();
     var lost = saved.length - state.seq.length;
     setStatus('Opened "' + (p.name || p.fileName) + '" with ' + state.seq.length + ' bend' + (state.seq.length === 1 ? '' : 's') + '.' +
@@ -1725,24 +1659,6 @@
     SETTINGS_IDS.forEach(function (id) {
       $(id).addEventListener('change', saveSettings);
     });
-    ['progNo', 'job', 'material', 'thickness', 'punch', 'die'].forEach(function (id) {
-      $(id).addEventListener('input', function () { refreshOutput(false); });
-    });
-    $('outFormat').addEventListener('change', function () { refreshOutput(true); });
-    $('regen').addEventListener('click', function () { refreshOutput(true); });
-    $('outText').addEventListener('input', function () { state.outputEdited = true; $('outEditedNote').hidden = false; });
-    $('dlBtn').addEventListener('click', function () {
-      var k = $('outFormat').value;
-      var ext = { text: 'txt', csv: 'csv', json: 'json' }[k];
-      download(baseName() + '.' + ext, $('outText').value, k === 'json' ? 'application/json' : 'text/plain');
-    });
-    $('copyBtn').addEventListener('click', function () {
-      var t = $('outText');
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(t.value).then(function () { setStatus('Program copied to the clipboard.'); },
-          function () { t.select(); document.execCommand('copy'); setStatus('Program copied to the clipboard.'); });
-      } else { t.select(); document.execCommand('copy'); setStatus('Program copied to the clipboard.'); }
-    });
 
     $('btnUsbDir').addEventListener('click', usbWriteDir);
     $('usbFprog').addEventListener('change', function (ev) { usbDownload(ev.target.files[0]); ev.target.value = ''; });
@@ -1760,6 +1676,19 @@
     }
 
     if (typeof ResizeObserver !== 'undefined') new ResizeObserver(sizeCanvas).observe($('dropZone'));
+    function showPage(name) {
+      Array.prototype.forEach.call(document.querySelectorAll('[data-pg]'), function (el) { el.hidden = el.dataset.pg !== name; });
+      Array.prototype.forEach.call(document.querySelectorAll('#mainTabs [data-page]'), function (b) { b.classList.toggle('on', b.dataset.page === name); });
+      try { localStorage.setItem('entalbend-page', name); } catch (e) { /* storage not available */ }
+      window.dispatchEvent(new Event('resize'));
+    }
+    Array.prototype.forEach.call(document.querySelectorAll('#mainTabs [data-page]'), function (b) {
+      b.addEventListener('click', function () { showPage(b.dataset.page); });
+    });
+    var startPage = 'draw';
+    try { startPage = localStorage.getItem('entalbend-page') || 'draw'; } catch (e) { /* storage not available */ }
+    if (!document.querySelector('#mainTabs [data-page="' + startPage + '"]')) startPage = 'draw';
+    showPage(startPage);
     Array.prototype.forEach.call(document.querySelectorAll('.workTabs [data-work]'), function (btn) {
       btn.addEventListener('click', function () {
         var sim = btn.dataset.work === 'sim';
@@ -1781,7 +1710,7 @@
   }
 
   window.EntalBend = {
-    loadText: loadText, state: state, computeRows: computeRows, formatProgram: formatProgram, toggleBend: toggleBend,
+    loadText: loadText, state: state, computeRows: computeRows, toggleBend: toggleBend,
     snapshot: snapshot, applyProgram: applyProgram, usbPrepare: usbPrepare, toolPlan: toolPlan, toolingPdf: toolingPdf,
     importStep: importStep, suggestOrder: suggestOrder
   };
