@@ -1,0 +1,6 @@
+DOS=UMB
+DOS=HIGH
+device=c:\himem.sys
+files=30
+buffers=20
+device=c:\eansi.sys
