@@ -63,6 +63,22 @@
 
   <aside class="side">
     <section class="panel">
+      <h2>Program</h2>
+      <div class="fields">
+        <label>Program no.<input id="progNo" inputmode="numeric" maxlength="6" placeholder="max 6 digits"></label>
+        <label>Job reference<input id="job" maxlength="13" placeholder="max 13 characters"></label>
+        <label>Material<input id="material" list="matList" value="Steel"></label>
+        <datalist id="matList"><option value="Steel"><option value="Stainless steel"><option value="Aluminium"></datalist>
+        <label>Thickness (mm)<input id="thickness" type="number" step="0.1" min="0" value="2"></label>
+        <label title="Used to unfold STEP files: bend allowance = angle x (inside radius + K x thickness). Use the same K-factor as in SolidWorks (its default is 0.5).">K-factor (STEP)<input id="kFactor" type="number" step="0.001" min="0" max="1" value="0.345"></label>
+        <label>Punch<input id="punch" placeholder="tool reference"></label>
+        <label>Die<input id="die" placeholder="tool reference"></label>
+        <label>Default angle (°)<input id="defAngle" type="number" step="0.1" min="0" max="180" value="90"></label>
+        <label title="The backgauge distance is measured to the farthest edge that is at least this wide. Small tabs narrower than this are ignored. 0 = use the farthest point.">Ignore tabs narrower than (mm)<input id="gaugeMin" type="number" step="5" min="0" value="60"></label>
+      </div>
+    </section>
+
+    <section class="panel">
       <details open>
         <summary>Bend line detection</summary>
         <div class="fields">
@@ -105,23 +121,6 @@
           <thead><tr><th>Name</th><th>Bends</th><th></th></tr></thead>
           <tbody id="libBody"><tr><td colspan="3" class="empty">No saved programs yet.</td></tr></tbody>
         </table>
-      </div>
-    </section>
-  </div>
-  <div class="progCol">
-    <section class="panel">
-      <h2>Program</h2>
-      <div class="fields">
-        <label>Program no.<input id="progNo" inputmode="numeric" maxlength="6" placeholder="max 6 digits"></label>
-        <label>Job reference<input id="job" maxlength="13" placeholder="max 13 characters"></label>
-        <label>Material<input id="material" list="matList" value="Steel"></label>
-        <datalist id="matList"><option value="Steel"><option value="Stainless steel"><option value="Aluminium"></datalist>
-        <label>Thickness (mm)<input id="thickness" type="number" step="0.1" min="0" value="2"></label>
-        <label title="Used to unfold STEP files: bend allowance = angle x (inside radius + K x thickness). Use the same K-factor as in SolidWorks (its default is 0.5).">K-factor (STEP)<input id="kFactor" type="number" step="0.001" min="0" max="1" value="0.345"></label>
-        <label>Punch<input id="punch" placeholder="tool reference"></label>
-        <label>Die<input id="die" placeholder="tool reference"></label>
-        <label>Default angle (°)<input id="defAngle" type="number" step="0.1" min="0" max="180" value="90"></label>
-        <label title="The backgauge distance is measured to the farthest edge that is at least this wide. Small tabs narrower than this are ignored. 0 = use the farthest point.">Ignore tabs narrower than (mm)<input id="gaugeMin" type="number" step="5" min="0" value="60"></label>
       </div>
     </section>
   </div>

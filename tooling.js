@@ -346,6 +346,13 @@
             });
             c = best ? best.c : null;
           }
+          if (!c) {
+            /* No punch can be built that does this bend without hitting something. A station of its own would not help (and
+               could not be built): fewest stations wins, so it goes on a station whose length suits it, and the hit check
+               below reports what the punch still hits. */
+            var near = stations.filter(function (st) { return !st.missing && st.len >= bd.loMax - 1e-6 && st.len <= reach(bd) + 1e-6; })[0];
+            if (near) { bd.station = stations.indexOf(near); near.bends.push(bd.k); return; }
+          }
           if (c) useStock(stock, c, horns);
           else {
             bd.extra.push('the punch sections left cannot make ' + Math.ceil(bd.lo) + (isFinite(bd.hi) ? '-' + Math.floor(bd.hi) : '') + ' mm' +
